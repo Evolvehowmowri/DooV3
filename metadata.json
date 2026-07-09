@@ -1,0 +1,8 @@
+{
+  "name": "Do",
+  "description": "Verb is an elegant, fast, and responsive habit and task tracker inspired by the open-source Loop habit tracker. Create recurring habits (Re) or one-off tasks, track yes/no or measurable stats, set priorities, and see your progress in the Agenda.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
