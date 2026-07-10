@@ -8,10 +8,11 @@ import java.util.Locale
 
 object StreakCalculator {
     fun calculateStreak(logs: List<DoLog>, doId: Int): Int {
-        val completedDates = logs.filter { it.doId == doId && it.value > 0f }
+        val habitLogs = logs.filter { it.doId == doId }
+        val completedDates = habitLogs.filter { it.value > 0f }
             .map { it.date }
             .toSet()
-        val skippedDates = logs.filter { it.doId == doId && it.value == -1f }
+        val skippedDates = habitLogs.filter { it.value == -1f }
             .map { it.date }
             .toSet()
         
@@ -47,14 +48,15 @@ object StreakCalculator {
     }
 
     fun calculateLongestStreak(logs: List<DoLog>, doId: Int): Int {
-        val completedDates = logs.filter { it.doId == doId && it.value > 0f }
+        val habitLogs = logs.filter { it.doId == doId }
+        val completedDates = habitLogs.filter { it.value > 0f }
             .map { it.date }
             .distinct()
             .sorted()
         
         if (completedDates.isEmpty()) return 0
 
-        val skippedDates = logs.filter { it.doId == doId && it.value == -1f }
+        val skippedDates = habitLogs.filter { it.value == -1f }
             .map { it.date }
             .toSet()
 
@@ -100,5 +102,63 @@ object StreakCalculator {
         }
 
         return maxOf(maxStreak, currentStreak)
+    }
+
+    fun calculateHabitStrength(
+        logs: List<DoLog>,
+        doId: Int,
+        isMeasurable: Boolean,
+        targetValue: Float,
+        upToDateStr: String
+    ): Float {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val targetDate = try { sdf.parse(upToDateStr) } catch (e: Exception) { Date() }
+        
+        val cal = Calendar.getInstance()
+        cal.time = targetDate
+        cal.add(Calendar.DAY_OF_YEAR, -45) // Go back 45 days to start simulation
+        
+        var score = 0f
+        var consecutiveMisses = 0
+        var consecutiveCompletes = 0
+        
+        val habitLogsMap = logs.filter { it.doId == doId }.associateBy { it.date }
+        
+        for (i in 0..45) {
+            val currentDateStr = sdf.format(cal.time)
+            val log = habitLogsMap[currentDateStr]
+            
+            if (log == null) {
+                consecutiveCompletes = 0
+                consecutiveMisses++
+                val decay = if (consecutiveMisses > 1) 4f else 2f
+                score = maxOf(0f, score - decay)
+            } else if (log.value == -1f) {
+                consecutiveMisses = 0
+            } else if (log.value == 0f) {
+                consecutiveCompletes = 0
+                consecutiveMisses++
+                val penalty = if (consecutiveMisses > 1) 12f else 6f
+                score = maxOf(0f, score - penalty)
+            } else {
+                consecutiveMisses = 0
+                consecutiveCompletes++
+                
+                val ratio = if (isMeasurable) {
+                    if (targetValue > 0f) log.value / targetValue else 0f
+                } else {
+                    1f
+                }
+                val clampedRatio = minOf(1f, maxOf(0f, ratio))
+                val baseReward = 8f * clampedRatio
+                val streakBonus = minOf(4f, consecutiveCompletes * 0.4f)
+                
+                score = minOf(100f, score + baseReward + streakBonus)
+            }
+            
+            cal.add(Calendar.DAY_OF_YEAR, 1)
+        }
+        
+        return score
     }
 }

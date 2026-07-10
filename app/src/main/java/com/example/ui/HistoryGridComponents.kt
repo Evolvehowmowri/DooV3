@@ -261,10 +261,10 @@ fun HistoryMatrixView(
 
                                 // Completion stats
                                 val completionRate = remember(logs, doItem.id) {
-                                    val doLogs = logs.filter { it.doId == doItem.id }
+                                    val doLogsMap = logs.filter { it.doId == doItem.id }.associateBy { it.date }
                                     var completedCount = 0
                                     historyDays.forEach { day ->
-                                        val log = doLogs.find { it.date == day.dateString }
+                                        val log = doLogsMap[day.dateString]
                                         if (log != null && log.value > 0f) {
                                             if (doItem.isMeasurable) {
                                                 if (log.value >= doItem.targetValue) completedCount++
@@ -277,7 +277,7 @@ fun HistoryMatrixView(
                                 }
 
                                 val monthlyProgress = remember(logs, doItem.id) {
-                                    val doLogs = logs.filter { it.doId == doItem.id }
+                                    val doLogsMap = logs.filter { it.doId == doItem.id }.associateBy { it.date }
                                     val cal = Calendar.getInstance()
                                     val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                                     var completed = 0
@@ -285,7 +285,7 @@ fun HistoryMatrixView(
                                     var totalDaysToConsider = 0
                                     for (i in 0 until total) {
                                         val dateStr = sdf.format(cal.time)
-                                        val log = doLogs.find { it.date == dateStr }
+                                        val log = doLogsMap[dateStr]
                                         val isSkipped = log != null && log.value == -1f
                                         if (!isSkipped) {
                                             totalDaysToConsider++
@@ -374,6 +374,11 @@ fun HistoryMatrixView(
 
                                     // Right section: 7 interactive grid boxes
                                     val logsMap = remember(logs) { logs.associateBy { "${it.doId}_${it.date}" } }
+                                    val completedDatesForDo = remember(logs, doItem.id) {
+                                        logs.filter { it.doId == doItem.id && it.value > 0f }
+                                            .map { it.date }
+                                            .sorted()
+                                    }
                                     Row(
                                         modifier = Modifier.weight(2f),
                                         horizontalArrangement = Arrangement.SpaceBetween
@@ -391,8 +396,7 @@ fun HistoryMatrixView(
                                             // Calculate if it is mellow satisfied (within interval)
                                             val interval = doItem.reminderTime?.let { com.example.CustomReminderConfig.fromString(it).intervalDays } ?: 0
                                             val isMellowSatisfied = if (interval > 1 && !isCompleted && !isSkipped) {
-                                                val lastCompletedDate = logs.filter { it.doId == doItem.id && it.date <= day.dateString && it.value > 0f }
-                                                    .maxOfOrNull { it.date }
+                                                val lastCompletedDate = completedDatesForDo.lastOrNull { it <= day.dateString }
                                                 if (lastCompletedDate != null) {
                                                     val daysDiff = getDaysBetween(lastCompletedDate, day.dateString)
                                                     daysDiff in 1 until interval

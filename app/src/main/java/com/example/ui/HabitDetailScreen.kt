@@ -25,6 +25,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,32 +68,16 @@ fun HabitDetailScreen(
     val completionsCount = remember(doLogs) { doLogs.count { it.value > 0f } }
 
     // Calculate Overview stats (Score, Month change, Year change, Total)
-    val score30Days = remember(doLogs) {
-        val cal = Calendar.getInstance()
+    val score30Days = remember(doLogs, doItem.id, doItem.isMeasurable, doItem.targetValue) {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        var completed = 0
-        var totalDaysToConsider = 0
-        for (i in 0 until 30) {
-            val dateStr = dateFormat.format(cal.time)
-            val log = doLogs.find { it.date == dateStr }
-            val isSkipped = log != null && log.value == -1f
-            if (!isSkipped) {
-                totalDaysToConsider++
-                if (log != null) {
-                    if (doItem.isMeasurable) {
-                        if (log.value >= doItem.targetValue) completed++
-                    } else {
-                        if (log.value > 0f) completed++
-                    }
-                }
-            }
-            cal.add(Calendar.DAY_OF_YEAR, -1)
-        }
-        if (totalDaysToConsider > 0) {
-            ((completed / totalDaysToConsider.toFloat()) * 100).toInt()
-        } else {
-            0
-        }
+        val todayStr = dateFormat.format(Calendar.getInstance().time)
+        StreakCalculator.calculateHabitStrength(
+            logs = doLogs,
+            doId = doItem.id,
+            isMeasurable = doItem.isMeasurable,
+            targetValue = doItem.targetValue,
+            upToDateStr = todayStr
+        ).toInt()
     }
 
     // Month-over-month completion change
@@ -236,6 +221,79 @@ fun HabitDetailScreen(
             currentCount = current7DaysCompletions,
             prevCount = prev7DaysCompletions
         )
+    }
+
+    // BJ Fogg Habit Stacking State
+    val context = LocalContext.current
+    val habitStackPrefs = remember(context) { context.getSharedPreferences("habit_stack_prefs", android.content.Context.MODE_PRIVATE) }
+    var anchorHabit by remember(doItem.id) { 
+        mutableStateOf(habitStackPrefs.getString("anchor_${doItem.id}", "") ?: "") 
+    }
+    var isEditingStack by remember { mutableStateOf(false) }
+    var tempAnchorHabit by remember { mutableStateOf(anchorHabit) }
+
+    // Time-of-day stats analysis
+    val timeOfDayStats = remember(doLogs) {
+        var morning = 0
+        var afternoon = 0
+        var evening = 0
+        var night = 0
+        
+        val cal = Calendar.getInstance()
+        doLogs.forEach { log ->
+            if (log.value > 0f) {
+                cal.timeInMillis = log.loggedAt
+                val hour = cal.get(Calendar.HOUR_OF_DAY)
+                when (hour) {
+                    in 5..11 -> morning++
+                    in 12..16 -> afternoon++
+                    in 17..20 -> evening++
+                    else -> night++
+                }
+            }
+        }
+        
+        listOf(
+            Triple("Morning", morning, Icons.Default.Lightbulb),
+            Triple("Afternoon", afternoon, Icons.Default.WbSunny),
+            Triple("Evening", evening, Icons.Default.Schedule),
+            Triple("Night", night, Icons.Default.Star)
+        )
+    }
+
+    // Aura AI Coach Behavior Diagnostic Report
+    val auraCoachMessage = remember(score30Days, currentStreak, progressInsight.trendType, doItem.name) {
+        when {
+            score30Days == 0 -> {
+                "Hi there! I'm Aura, your personal habits coach. I noticed we haven't logged any progress yet for \"${doItem.name}\". " +
+                "That is completely natural—starting is always the heaviest friction point! " +
+                "Let's bypass the psychological overwhelm: can we commit to just a 1-minute version of this habit today? " +
+                "Action precedes motivation. Just log a tiny win to spark your engine!"
+            }
+            currentStreak >= 5 -> {
+                "Incredible focus! Aura here, and I'm highly impressed by your running streak of $currentStreak days! " +
+                "Your brain is successfully constructing a new automated neural pathway. " +
+                "To cement this deep into your subconscious, try executing \"${doItem.name}\" at the exact same physical spot or room every single day. " +
+                "Keep this magnificent momentum going!"
+            }
+            progressInsight.trendType == "FALLING_BEHIND" -> {
+                "Aura here with a mindful check-in. Progress is rarely a straight line, so do not be discouraged! " +
+                "You completed this $completionsCount times recently, but your weekly pace has softened. " +
+                "When resistance is high, apply James Clear's 'Two-Minute Rule': reduce the size of \"${doItem.name}\" so it is impossibly easy to do. " +
+                "Remember: an imperfect completion is infinitely better than a perfect miss."
+            }
+            progressInsight.trendType == "IMPROVING" -> {
+                "Sensational momentum! Aura here—I'm thrilled to see you outperforming last week's count. " +
+                "Your consistency is rising rapidly, and \"${doItem.name}\" is beginning to feel like a natural part of your day. " +
+                "Ride this wave by setting a positive reward anchor immediately after you finish (like 2 minutes of relaxing music or a visual checkmark). " +
+                "You are doing beautifully!"
+            }
+            else -> { // STABLE / INACTIVE / DEFAULT
+                "Aura here with your custom behavioral diagnostic. You're showing steady consistency, which is the foundational bedrock of mastery! " +
+                "To optimize your execution further, see if you can stack \"${doItem.name}\" right after a reliable daily trigger (like brushing your teeth or finishing lunch). " +
+                "Consistency wins the long game—one day at a time!"
+            }
+        }
     }
 
     // Dialog layout
@@ -527,6 +585,114 @@ fun HabitDetailScreen(
                         }
                     }
 
+                    // Aura AI Behavior Specialist Coach Card
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1F29)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Brush.horizontalGradient(listOf(themeColor.copy(alpha = 0.5f), LavenderAccent.copy(alpha = 0.5f))), RoundedCornerShape(24.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    // Custom Aura Profile Avatar with Glowing Effect
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(Brush.radialGradient(listOf(LavenderAccent.copy(alpha = 0.3f), Color.Transparent)))
+                                            .border(1.dp, LavenderAccent, CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Face,
+                                            contentDescription = null,
+                                            tint = LavenderAccent,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Column {
+                                        Text(
+                                            text = "Aura Insights",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 14.sp
+                                        )
+                                        Text(
+                                            text = "Personal Behavior Specialist",
+                                            color = LavenderAccent,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                
+                                // Interactive "Aura Badge"
+                                Box(
+                                    modifier = Modifier
+                                        .background(LavenderAccent.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                        .border(1.dp, LavenderAccent.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "Smart Analysis",
+                                        color = LavenderAccent,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = auraCoachMessage,
+                                color = DarkTextPrimary,
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp,
+                                fontWeight = FontWeight.Normal
+                            )
+
+                            // Aura Mini Challenge
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White.copy(alpha = 0.03f))
+                                    .padding(10.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = BrightAmber,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = if (score30Days == 0) "Today's Micro-target: Log just 1 check-in!" else "Focus: Maintain perfect consistency this weekend.",
+                                        color = DarkTextSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Dynamic Progress Optimization Insights Card
                     Card(
                         shape = RoundedCornerShape(24.dp),
@@ -649,6 +815,183 @@ fun HabitDetailScreen(
                         }
                     }
 
+                    // Behavior Design: BJ Fogg Habit Stacking Strategy Card
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, GlassBorder, RoundedCornerShape(24.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Bolt,
+                                        contentDescription = null,
+                                        tint = themeColor,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = "Behavior Design: Habit Stacking",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                                if (!isEditingStack) {
+                                    IconButton(
+                                        onClick = { 
+                                            tempAnchorHabit = anchorHabit
+                                            isEditingStack = true 
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Edit Stack",
+                                            tint = themeColor,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Text(
+                                text = "Build automatic psychological triggers by anchoring your new habit to an existing reliable routine (e.g., pouring morning coffee, brushing teeth).",
+                                color = DarkTextSecondary,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+
+                            if (isEditingStack) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = tempAnchorHabit,
+                                        onValueChange = { tempAnchorHabit = it },
+                                        placeholder = { Text("e.g. pour my morning coffee", fontSize = 12.sp, color = DarkTextSecondary) },
+                                        textStyle = LocalTextStyle.current.copy(color = Color.White, fontSize = 12.sp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = themeColor,
+                                            unfocusedBorderColor = GlassBorder,
+                                            focusedContainerColor = DarkSurfaceVariant,
+                                            unfocusedContainerColor = DarkSurfaceVariant
+                                        ),
+                                        singleLine = true
+                                    )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.align(Alignment.End)
+                                    ) {
+                                        TextButton(onClick = { isEditingStack = false }) {
+                                            Text("Cancel", color = DarkTextSecondary, fontSize = 12.sp)
+                                        }
+                                        Button(
+                                            onClick = {
+                                                anchorHabit = tempAnchorHabit
+                                                habitStackPrefs.edit().putString("anchor_${doItem.id}", tempAnchorHabit).apply()
+                                                isEditingStack = false
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = themeColor)
+                                        ) {
+                                            Text("Save Formula", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            } else {
+                                if (anchorHabit.isBlank()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(DarkSurfaceVariant)
+                                            .clickable { 
+                                                tempAnchorHabit = ""
+                                                isEditingStack = true 
+                                            }
+                                            .padding(16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "+ Set up a Habit Stacking formula",
+                                            color = themeColor,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                } else {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(themeColor.copy(alpha = 0.08f))
+                                            .border(1.dp, themeColor.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                                            .padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "YOUR STACKING FORMULA",
+                                            color = themeColor,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            letterSpacing = 1.sp
+                                        )
+                                        
+                                        Row(
+                                            verticalAlignment = Alignment.Top,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "After I ",
+                                                color = Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = anchorHabit,
+                                                color = themeColor,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                        Row(
+                                            verticalAlignment = Alignment.Top,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "I will ",
+                                                color = Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = doItem.name,
+                                                color = themeColor,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // 2. Score Trend Line Chart
                     Card(
                         shape = RoundedCornerShape(24.dp),
@@ -662,17 +1005,34 @@ fun HabitDetailScreen(
                                 .fillMaxWidth()
                                 .padding(16.dp)
                         ) {
+                            var showScoreScience by remember { mutableStateOf(false) }
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "Score Trend",
-                                    color = themeColor,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { showScoreScience = !showScoreScience }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "Score Trend",
+                                        color = themeColor,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Science,
+                                        contentDescription = "Score Science",
+                                        tint = themeColor.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
 
                                 // Modern Range Selection Chips
                                 Row(
@@ -715,18 +1075,14 @@ fun HabitDetailScreen(
                                         for (i in 0 until 7) {
                                             val labelDate = cal.time
                                             val dStr = dateFormat.format(labelDate)
-                                            val log = doLogs.find { it.date == dStr }
-                                            val score = if (log != null) {
-                                                if (doItem.isMeasurable) {
-                                                    val fraction = if (doItem.targetValue > 0f) log.value / doItem.targetValue else 0f
-                                                    minOf(1f, maxOf(0f, fraction)) * 100f
-                                                } else {
-                                                    if (log.value > 0f) 100f else 0f
-                                                }
-                                            } else {
-                                                0f
-                                            }
-                                            points.add(0, Pair(dayFormat.format(labelDate), score))
+                                            val strength = StreakCalculator.calculateHabitStrength(
+                                                logs = doLogs,
+                                                doId = doItem.id,
+                                                isMeasurable = doItem.isMeasurable,
+                                                targetValue = doItem.targetValue,
+                                                upToDateStr = dStr
+                                            )
+                                            points.add(0, Pair(dayFormat.format(labelDate), strength))
                                             cal.add(Calendar.DAY_OF_YEAR, -1)
                                         }
                                     }
@@ -734,23 +1090,17 @@ fun HabitDetailScreen(
                                         // Past 4 weeks
                                         val cal = Calendar.getInstance()
                                         for (w in 0 until 4) {
-                                            var completedDays = 0f
-                                            var totalDays = 0f
                                             val labelDate = cal.time
-                                            for (d in 0 until 7) {
-                                                val dStr = dateFormat.format(cal.time)
-                                                val log = doLogs.find { it.date == dStr }
-                                                val isSkipped = log != null && log.value == -1f
-                                                if (!isSkipped) {
-                                                    totalDays += 1f
-                                                    if (log != null && (if (doItem.isMeasurable) log.value >= doItem.targetValue else log.value > 0f)) {
-                                                        completedDays += 1f
-                                                    }
-                                                }
-                                                cal.add(Calendar.DAY_OF_YEAR, -1)
-                                            }
-                                            val weekScore = if (totalDays > 0) (completedDays / totalDays) * 100f else 0f
-                                            points.add(0, Pair("Wk ${4 - w}", weekScore))
+                                            val dStr = dateFormat.format(labelDate)
+                                            val strength = StreakCalculator.calculateHabitStrength(
+                                                logs = doLogs,
+                                                doId = doItem.id,
+                                                isMeasurable = doItem.isMeasurable,
+                                                targetValue = doItem.targetValue,
+                                                upToDateStr = dStr
+                                            )
+                                            points.add(0, Pair("Wk ${4 - w}", strength))
+                                            cal.add(Calendar.DAY_OF_YEAR, -7)
                                         }
                                     }
                                     "Month" -> {
@@ -759,23 +1109,16 @@ fun HabitDetailScreen(
                                         val monthFormat = SimpleDateFormat("MMM", Locale.getDefault())
                                         for (m in 0 until 6) {
                                             val labelMonth = cal.time
-                                            val maxDaysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                                            var completedDays = 0f
-                                            var totalDays = 0f
-                                            for (d in 0 until maxDaysInMonth) {
-                                                val dStr = dateFormat.format(cal.time)
-                                                val log = doLogs.find { it.date == dStr }
-                                                val isSkipped = log != null && log.value == -1f
-                                                if (!isSkipped) {
-                                                    totalDays += 1f
-                                                    if (log != null && (if (doItem.isMeasurable) log.value >= doItem.targetValue else log.value > 0f)) {
-                                                        completedDays += 1f
-                                                    }
-                                                }
-                                                cal.add(Calendar.DAY_OF_YEAR, -1)
-                                            }
-                                            val monthScore = if (totalDays > 0) (completedDays / totalDays) * 100f else 0f
-                                            points.add(0, Pair(monthFormat.format(labelMonth), monthScore))
+                                            val dStr = dateFormat.format(labelMonth)
+                                            val strength = StreakCalculator.calculateHabitStrength(
+                                                logs = doLogs,
+                                                doId = doItem.id,
+                                                isMeasurable = doItem.isMeasurable,
+                                                targetValue = doItem.targetValue,
+                                                upToDateStr = dStr
+                                            )
+                                            points.add(0, Pair(monthFormat.format(labelMonth), strength))
+                                            cal.add(Calendar.MONTH, -1)
                                         }
                                     }
                                     else -> { // "Year"
@@ -784,23 +1127,16 @@ fun HabitDetailScreen(
                                         val monthFormat = SimpleDateFormat("MMM", Locale.getDefault())
                                         for (m in 0 until 12) {
                                             val labelMonth = cal.time
-                                            val maxDaysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                                            var completedDays = 0f
-                                            var totalDays = 0f
-                                            for (d in 0 until maxDaysInMonth) {
-                                                val dStr = dateFormat.format(cal.time)
-                                                val log = doLogs.find { it.date == dStr }
-                                                val isSkipped = log != null && log.value == -1f
-                                                if (!isSkipped) {
-                                                    totalDays += 1f
-                                                    if (log != null && (if (doItem.isMeasurable) log.value >= doItem.targetValue else log.value > 0f)) {
-                                                        completedDays += 1f
-                                                    }
-                                                }
-                                                cal.add(Calendar.DAY_OF_YEAR, -1)
-                                            }
-                                            val monthScore = if (totalDays > 0) (completedDays / totalDays) * 100f else 0f
-                                            points.add(0, Pair(monthFormat.format(labelMonth), monthScore))
+                                            val dStr = dateFormat.format(labelMonth)
+                                            val strength = StreakCalculator.calculateHabitStrength(
+                                                logs = doLogs,
+                                                doId = doItem.id,
+                                                isMeasurable = doItem.isMeasurable,
+                                                targetValue = doItem.targetValue,
+                                                upToDateStr = dStr
+                                            )
+                                            points.add(0, Pair(monthFormat.format(labelMonth), strength))
+                                            cal.add(Calendar.MONTH, -1)
                                         }
                                     }
                                 }
@@ -808,6 +1144,8 @@ fun HabitDetailScreen(
                             }
 
                             ScoreTrendChart(points = trendPoints, themeColor = themeColor)
+
+                            HabitScoreScienceGuide(show = showScoreScience, themeColor = themeColor)
                         }
                     }
 
@@ -1284,6 +1622,129 @@ fun HabitDetailScreen(
                                     }
                                 }
                             }
+                            
+                            // Weekly diagnostic power day insight
+                            val weekdayLabelsFull = listOf("Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+                            val powerDayIndex = remember(weekdayCounts) {
+                                if (weekdayCounts.any { it > 0 }) weekdayCounts.indices.maxByOrNull { weekdayCounts[it] } ?: -1 else -1
+                            }
+                            if (powerDayIndex != -1 && weekdayCounts[powerDayIndex] > 0) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(GlassBorder)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "Power Day",
+                                        tint = themeColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "Your power day is ${weekdayLabelsFull[powerDayIndex]} with ${weekdayCounts[powerDayIndex]} completions!",
+                                        color = DarkTextPrimary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 7. Time of Day Analysis Card
+                    val todTotalCompletions = remember(timeOfDayStats) { timeOfDayStats.sumOf { it.second } }
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, GlassBorder, RoundedCornerShape(24.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "Time of Day Profile",
+                                color = themeColor,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            
+                            Text(
+                                text = "See what times of day you're most active at completing this task or habit.",
+                                color = DarkTextSecondary,
+                                fontSize = 11.sp
+                            )
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                timeOfDayStats.forEach { (label, count, icon) ->
+                                    val fraction = if (todTotalCompletions > 0) count.toFloat() / todTotalCompletions else 0f
+                                    Card(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .border(1.dp, if (fraction > 0f) themeColor.copy(alpha = 0.2f) else Color.Transparent, RoundedCornerShape(12.dp)),
+                                        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(8.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = icon,
+                                                contentDescription = null,
+                                                tint = if (count > 0) themeColor else DarkTextSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            
+                                            Text(
+                                                text = label,
+                                                color = if (count > 0) Color.White else DarkTextSecondary,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(4.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color.White.copy(alpha = 0.05f))
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxHeight()
+                                                        .fillMaxWidth(fraction)
+                                                        .background(themeColor)
+                                                )
+                                            }
+                                            
+                                            Text(
+                                                text = "$count log${if (count == 1) "" else "s"}",
+                                                color = if (count > 0) themeColor else DarkTextSecondary,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -1301,111 +1762,213 @@ fun ScoreTrendChart(
     themeColor: Color,
     modifier: Modifier = Modifier
 ) {
-    Canvas(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(180.dp)
-            .padding(top = 10.dp, bottom = 24.dp, start = 16.dp, end = 16.dp)
-    ) {
-        val width = size.width
-        val height = size.height
+    var activeIndex by remember(points) { mutableStateOf(-1) }
 
-        if (points.isEmpty()) return@Canvas
-
-        val maxVal = 100f
-        val pointsSize = points.size
-        val xInterval = width / (pointsSize - 1)
-
-        val drawPoints = points.mapIndexed { index, pair ->
-            val x = index * xInterval
-            val y = height - ((pair.second / maxVal) * height)
-            Offset(x, y)
-        }
-
-        // Draw horizontal grid lines
-        val gridLines = 4
-        for (i in 0..gridLines) {
-            val y = (height / gridLines) * i
-            drawLine(
-                color = Color.White.copy(alpha = 0.05f),
-                start = Offset(0f, y),
-                end = Offset(width, y),
-                strokeWidth = 1.dp.toPx()
-            )
-        }
-
-        // Draw smooth path
-        val path = Path()
-        if (drawPoints.isNotEmpty()) {
-            path.moveTo(drawPoints[0].x, drawPoints[0].y)
-            for (i in 0 until drawPoints.size - 1) {
-                val p1 = drawPoints[i]
-                val p2 = drawPoints[i + 1]
-                val controlX = (p1.x + p2.x) / 2
-                path.cubicTo(
-                    controlX, p1.y,
-                    controlX, p2.y,
-                    p2.x, p2.y
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (activeIndex in points.indices) {
+            val activePair = points[activeIndex]
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .background(themeColor.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                    .border(1.dp, themeColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = themeColor, modifier = Modifier.size(12.dp))
+                    Text(
+                        text = activePair.first,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = "Score: ${activePair.second.toInt()}%",
+                    color = themeColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
                 )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .background(Color.White.copy(alpha = 0.03f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.TouchApp, contentDescription = null, tint = DarkTextSecondary, modifier = Modifier.size(12.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Tap & drag on chart to inspect trend values",
+                    color = DarkTextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 10.dp, bottom = 24.dp, start = 16.dp, end = 16.dp)
+                    .pointerInput(points) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull()
+                                if (change != null) {
+                                    val isPressed = change.pressed
+                                    if (isPressed) {
+                                        val pointsSize = points.size
+                                        if (pointsSize > 0) {
+                                            val xInterval = size.width / if (pointsSize > 1) (pointsSize - 1) else 1
+                                            val index = ((change.position.x + xInterval / 2) / xInterval).toInt().coerceIn(0, pointsSize - 1)
+                                            activeIndex = index
+                                        }
+                                        change.consume()
+                                    } else {
+                                        activeIndex = -1
+                                    }
+                                }
+                            }
+                        }
+                    }
+            ) {
+                val width = size.width
+                val height = size.height
+
+                if (points.isEmpty()) return@Canvas
+
+                val maxVal = 100f
+                val pointsSize = points.size
+                val xInterval = width / if (pointsSize > 1) (pointsSize - 1) else 1
+
+                val drawPoints = points.mapIndexed { index, pair ->
+                    val x = index * xInterval
+                    val y = height - ((pair.second / maxVal) * height)
+                    Offset(x, y)
+                }
+
+                // Draw horizontal grid lines
+                val gridLines = 4
+                for (i in 0..gridLines) {
+                    val y = (height / gridLines) * i
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.05f),
+                        start = Offset(0f, y),
+                        end = Offset(width, y),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+
+                // Draw smooth path
+                val path = Path()
+                if (drawPoints.isNotEmpty()) {
+                    path.moveTo(drawPoints[0].x, drawPoints[0].y)
+                    for (i in 0 until drawPoints.size - 1) {
+                        val p1 = drawPoints[i]
+                        val p2 = drawPoints[i + 1]
+                        val controlX = (p1.x + p2.x) / 2
+                        path.cubicTo(
+                            controlX, p1.y,
+                            controlX, p2.y,
+                            p2.x, p2.y
+                        )
+                    }
+                }
+
+                // Fill below the path
+                val fillPath = Path()
+                if (drawPoints.isNotEmpty()) {
+                    fillPath.addPath(path)
+                    fillPath.lineTo(drawPoints.last().x, height)
+                    fillPath.lineTo(drawPoints.first().x, height)
+                    fillPath.close()
+
+                    drawPath(
+                        path = fillPath,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(themeColor.copy(alpha = 0.25f), Color.Transparent),
+                            startY = 0f,
+                            endY = height
+                        )
+                    )
+                }
+
+                // Draw line stroke
+                drawPath(
+                    path = path,
+                    color = themeColor,
+                    style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                )
+
+                // Draw circles at data points
+                drawPoints.forEachIndexed { index, offset ->
+                    val isHighlighted = index == activeIndex
+                    drawCircle(
+                        color = themeColor,
+                        radius = (if (isHighlighted) 7.dp else 5.dp).toPx(),
+                        center = offset
+                    )
+                    drawCircle(
+                        color = if (isHighlighted) themeColor else Color.Black,
+                        radius = (if (isHighlighted) 3.dp else 2.5.dp).toPx(),
+                        center = offset
+                    )
+                }
+
+                // Draw highlighted guideline and halo
+                if (activeIndex in points.indices) {
+                    val activePoint = drawPoints[activeIndex]
+                    
+                    drawLine(
+                        color = themeColor.copy(alpha = 0.4f),
+                        start = Offset(activePoint.x, 0f),
+                        end = Offset(activePoint.x, height),
+                        strokeWidth = 1.5.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                    )
+
+                    drawCircle(
+                        color = themeColor.copy(alpha = 0.25f),
+                        radius = 12.dp.toPx(),
+                        center = activePoint
+                    )
+                }
             }
         }
 
-        // Fill below the path
-        val fillPath = Path()
-        if (drawPoints.isNotEmpty()) {
-            fillPath.addPath(path)
-            fillPath.lineTo(drawPoints.last().x, height)
-            fillPath.lineTo(drawPoints.first().x, height)
-            fillPath.close()
-
-            drawPath(
-                path = fillPath,
-                brush = Brush.verticalGradient(
-                    colors = listOf(themeColor.copy(alpha = 0.25f), Color.Transparent),
-                    startY = 0f,
-                    endY = height
+        // Render X labels row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            points.forEachIndexed { index, pair ->
+                val shouldShow = points.size <= 7 || index % 2 == 0 || index == points.size - 1
+                Text(
+                    text = if (shouldShow) pair.first else "",
+                    color = DarkTextSecondary.copy(alpha = 0.8f),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
                 )
-            )
-        }
-
-        // Draw line stroke
-        drawPath(
-            path = path,
-            color = themeColor,
-            style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
-        )
-
-        // Draw circles at data points & labels
-        drawPoints.forEachIndexed { index, offset ->
-            drawCircle(
-                color = themeColor,
-                radius = 5.dp.toPx(),
-                center = offset
-            )
-            drawCircle(
-                color = Color.Black,
-                radius = 2.5.dp.toPx(),
-                center = offset
-            )
-        }
-    }
-
-    // Render X labels row
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        points.forEachIndexed { index, pair ->
-            val shouldShow = points.size <= 7 || index % 2 == 0 || index == points.size - 1
-            Text(
-                text = if (shouldShow) pair.first else "",
-                color = DarkTextSecondary.copy(alpha = 0.8f),
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
+            }
         }
     }
 }
@@ -1458,9 +2021,11 @@ fun HistoryBarChart(
                 cornerRadius = CornerRadius(8.dp.toPx())
             )
 
-            // Draw colored completion bar
+            // Draw colored completion bar with vertical gradient
             drawRoundRect(
-                color = themeColor,
+                brush = Brush.verticalGradient(
+                    colors = listOf(themeColor, themeColor.copy(alpha = 0.6f))
+                ),
                 topLeft = Offset(x, y),
                 size = Size(barWidth, barHeight),
                 cornerRadius = CornerRadius(8.dp.toPx())
@@ -1525,4 +2090,196 @@ data class InsightData(
     val currentCount: Int,
     val prevCount: Int
 )
+
+@Composable
+fun HabitScoreScienceGuide(
+    show: Boolean,
+    themeColor: Color,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = show,
+        enter = expandVertically(animationSpec = androidx.compose.animation.core.spring(stiffness = androidx.compose.animation.core.Spring.StiffnessLow)) + fadeIn(),
+        exit = shrinkVertically(animationSpec = androidx.compose.animation.core.spring(stiffness = androidx.compose.animation.core.Spring.StiffnessLow)) + fadeOut()
+    ) {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp)
+                .background(Color.White.copy(alpha = 0.02f), RoundedCornerShape(16.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Psychology,
+                    contentDescription = null,
+                    tint = themeColor,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "Habit Strength Dynamics",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            
+            Text(
+                text = "Based on habit-formation science, your score represents automaticity. Doing habits builds strength, while consecutive skips or misses decay it differently.",
+                color = DarkTextSecondary,
+                fontSize = 11.sp,
+                lineHeight = 15.sp
+            )
+            
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Color.White.copy(alpha = 0.05f))
+            )
+            
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Done
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(themeColor, CircleShape)
+                        )
+                        Text(
+                            text = "Check-in (Done)",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Text(
+                        text = "+8 to +12 pts",
+                        color = themeColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                
+                // Skip
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(Color.Gray, CircleShape)
+                        )
+                        Text(
+                            text = "Excused Skip",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Text(
+                        text = "0 pts (Excused)",
+                        color = Color.Gray,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                
+                // Single Miss
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(Color(0xFFE57373), CircleShape)
+                        )
+                        Text(
+                            text = "First Miss (Accident)",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Text(
+                        text = "-2 to -6 pts",
+                        color = Color(0xFFE57373),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                
+                // Consecutive Miss
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(Color(0xFFEF5350), CircleShape)
+                        )
+                        Text(
+                            text = "Consecutive Miss (Neglect)",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Text(
+                        text = "-4 to -12 pts",
+                        color = Color(0xFFEF5350),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Color.White.copy(alpha = 0.05f))
+            )
+            
+            Text(
+                text = "💡 James Clear says: 'The first mistake is never the one that ruins you. It is the spiral of repeated mistakes that follows.' Never miss twice!",
+                color = themeColor.copy(alpha = 0.85f),
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
 

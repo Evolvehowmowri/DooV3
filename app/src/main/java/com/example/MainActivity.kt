@@ -253,6 +253,7 @@ fun MainAppScreen() {
     val usePersianScript by viewModel.usePersianScript.collectAsStateWithLifecycle()
     val calendarDays by viewModel.calendarDays.collectAsStateWithLifecycle()
     val overduePosition by viewModel.overduePosition.collectAsStateWithLifecycle()
+    val pendingNotifications by viewModel.pendingNotifications.collectAsStateWithLifecycle()
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -320,7 +321,6 @@ fun MainAppScreen() {
                         selected = activeTab == ActiveTab.Tools,
                         onClick = { activeTab = ActiveTab.Tools },
                         icon = {
-                            val pendingNotifications by viewModel.pendingNotifications.collectAsStateWithLifecycle()
                             val notifCount = pendingNotifications.size
                             if (notifCount > 0) {
                                 BadgedBox(
@@ -519,6 +519,8 @@ fun AgendaScreen(
     val calendarDays by viewModel.calendarDays.collectAsStateWithLifecycle()
     val overduePosition by viewModel.overduePosition.collectAsStateWithLifecycle()
 
+    val todayDateString = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date()) }
+
     val displayDateText = remember(selectedDate, persianCalendarEnabled, usePersianScript) {
         if (persianCalendarEnabled) {
             PersianCalendarHelper.formatToPersianFull(selectedDate, usePersianScript)
@@ -549,8 +551,9 @@ fun AgendaScreen(
     var isAllTimeLibrarySelected by rememberSaveable { mutableStateOf(false) }
 
     // Today's Agenda Items
-    val todayDos = remember(dos, selectedDate, logs) {
-        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
+    val todayDos = remember(dos, selectedDate, logs, todayDateString) {
+        val todayStr = todayDateString
+        val logsByDoId = logs.groupBy { it.doId }
         dos.filter { doItem ->
             if (doItem.type == "RECURRING") {
                 true
@@ -561,10 +564,9 @@ fun AgendaScreen(
                     !doItem.targetDate.isNullOrBlank() &&
                     doItem.targetDate < todayStr &&
                     run {
-                        val isCompleted = logs.any { log ->
-                            log.doId == doItem.id &&
+                        val isCompleted = logsByDoId[doItem.id]?.any { log ->
                             if (doItem.isMeasurable) log.value >= doItem.targetValue else log.value >= 1f
-                        }
+                        } ?: false
                         !isCompleted
                     }
                 } else false
@@ -576,6 +578,8 @@ fun AgendaScreen(
 
     // Filter by search, category, type, priority, and completion
     val filteredTodayDos = remember(todayDos, selectedCategory, searchQuery, typeFilter, priorityFilter, completionFilter, logs, selectedDate, doneDoBehavior) {
+        val logsForSelectedDateMap = logs.filter { it.date == selectedDate }.associateBy { it.doId }
+        val logsByDoId = logs.groupBy { it.doId }
         todayDos.filter { doItem ->
             // Search
             val matchSearch = searchQuery.isEmpty() || doItem.name.contains(searchQuery, ignoreCase = true)
@@ -592,12 +596,11 @@ fun AgendaScreen(
                     doItem.type == "TASK" && doItem.targetDate == selectedDate
                 }
                 "OVERDUE" -> {
-                    val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
+                    val todayStr = todayDateString
                     doItem.type == "TASK" && !doItem.targetDate.isNullOrBlank() && doItem.targetDate < todayStr && run {
-                        val isCompleted = logs.any { l ->
-                            l.doId == doItem.id &&
+                        val isCompleted = logsByDoId[doItem.id]?.any { l ->
                             if (doItem.isMeasurable) l.value >= doItem.targetValue else l.value >= 1f
-                        }
+                        } ?: false
                         !isCompleted
                     }
                 }
@@ -615,7 +618,7 @@ fun AgendaScreen(
             }
 
             // Completion
-            val log = logs.find { it.doId == doItem.id && it.date == selectedDate }
+            val log = logsForSelectedDateMap[doItem.id]
             val currentValue = log?.value ?: 0f
             val isCompleted = if (doItem.isMeasurable) currentValue >= doItem.targetValue else currentValue >= 1f
             val matchCompletion = when (completionFilter) {
@@ -638,16 +641,17 @@ fun AgendaScreen(
 
     // Sort items
     val sortedTodayDos = remember(filteredTodayDos, sortBy, logs, selectedDate, doneDoBehavior, overduePosition) {
+        val logsForSelectedDateMap = logs.filter { it.date == selectedDate }.associateBy { it.doId }
         filteredTodayDos.sortedWith { v1, v2 ->
             // Overdue Placement
             if (overduePosition == "TOP" || overduePosition == "BOTTOM") {
                 val isOverdue1 = v1.type == "TASK" && !v1.targetDate.isNullOrBlank() && v1.targetDate < selectedDate && run {
-                    val log1 = logs.find { it.doId == v1.id && it.date == selectedDate }
+                    val log1 = logsForSelectedDateMap[v1.id]
                     val isComp1 = if (v1.isMeasurable) (log1?.value ?: 0f) >= v1.targetValue else (log1?.value ?: 0f) >= 1f
                     !isComp1
                 }
                 val isOverdue2 = v2.type == "TASK" && !v2.targetDate.isNullOrBlank() && v2.targetDate < selectedDate && run {
-                    val log2 = logs.find { it.doId == v2.id && it.date == selectedDate }
+                    val log2 = logsForSelectedDateMap[v2.id]
                     val isComp2 = if (v2.isMeasurable) (log2?.value ?: 0f) >= v2.targetValue else (log2?.value ?: 0f) >= 1f
                     !isComp2
                 }
@@ -662,9 +666,9 @@ fun AgendaScreen(
             }
 
             if (doneDoBehavior == "STRIKETHROUGH_BOTTOM") {
-                val log1 = logs.find { it.doId == v1.id && it.date == selectedDate }
+                val log1 = logsForSelectedDateMap[v1.id]
                 val isComp1 = if (v1.isMeasurable) (log1?.value ?: 0f) >= v1.targetValue else (log1?.value ?: 0f) >= 1f
-                val log2 = logs.find { it.doId == v2.id && it.date == selectedDate }
+                val log2 = logsForSelectedDateMap[v2.id]
                 val isComp2 = if (v2.isMeasurable) (log2?.value ?: 0f) >= v2.targetValue else (log2?.value ?: 0f) >= 1f
                 
                 if (isComp1 != isComp2) {
@@ -698,9 +702,9 @@ fun AgendaScreen(
                     v1.name.compareTo(v2.name, ignoreCase = true)
                 }
                 "STATUS" -> {
-                    val log1 = logs.find { it.doId == v1.id && it.date == selectedDate }
+                    val log1 = logsForSelectedDateMap[v1.id]
                     val isComp1 = if (v1.isMeasurable) (log1?.value ?: 0f) >= v1.targetValue else (log1?.value ?: 0f) >= 1f
-                    val log2 = logs.find { it.doId == v2.id && it.date == selectedDate }
+                    val log2 = logsForSelectedDateMap[v2.id]
                     val isComp2 = if (v2.isMeasurable) (log2?.value ?: 0f) >= v2.targetValue else (log2?.value ?: 0f) >= 1f
                     
                     val cmp = isComp1.compareTo(isComp2)
@@ -762,17 +766,17 @@ fun AgendaScreen(
     }
 
     // Determine overdue tasks (Incomplete, targetDate in past relative to real today)
-    val overdueTasks = remember(dos, logs) {
-        val realToday = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(java.util.Date())
+    val overdueTasks = remember(dos, logs, todayDateString) {
+        val realToday = todayDateString
+        val logsByDoId = logs.groupBy { it.doId }
         dos.filter { doItem ->
             doItem.type == "TASK" &&
             !doItem.targetDate.isNullOrBlank() &&
             doItem.targetDate < realToday &&
             run {
-                val isCompleted = logs.any { log ->
-                    log.doId == doItem.id &&
+                val isCompleted = logsByDoId[doItem.id]?.any { log ->
                     if (doItem.isMeasurable) log.value >= doItem.targetValue else log.value >= 1f
-                }
+                } ?: false
                 !isCompleted
             }
         }
@@ -780,6 +784,7 @@ fun AgendaScreen(
 
     // Group items dynamically for the unified display
     val groupedSections = remember(activeDos, groupingStrategy, logs, selectedDate, overdueTasks, isAllTimeLibrarySelected) {
+        val logsForSelectedDateMap = logs.filter { it.date == selectedDate }.associateBy { it.doId }
         val baseSections = when (groupingStrategy) {
             GroupingStrategy.NONE -> {
                 listOf("" to activeDos)
@@ -819,7 +824,7 @@ fun AgendaScreen(
                 val pending = mutableListOf<Do>()
                 val completed = mutableListOf<Do>()
                 for (item in activeDos) {
-                    val log = logs.find { it.doId == item.id && it.date == selectedDate }
+                    val log = logsForSelectedDateMap[item.id]
                     val currentValue = log?.value ?: 0f
                     val isComp = if (item.isMeasurable) currentValue >= item.targetValue else currentValue >= 1f
                     if (isComp) completed.add(item) else pending.add(item)
@@ -835,6 +840,25 @@ fun AgendaScreen(
             listOf("⚠️ Overdue Tasks (Incomplete)" to overdueTasks) + baseSections
         } else {
             baseSections
+        }
+    }
+
+    // High performance O(1) maps for fast seamless rendering
+    val logsForSelectedDateMap = remember(logs, selectedDate) {
+        logs.filter { it.date == selectedDate }.associateBy { it.doId }
+    }
+
+    val completedLogAnyDayMap = remember(logs, filteredLibraryDos, isAllTimeLibrarySelected) {
+        if (isAllTimeLibrarySelected) {
+            val logsByDoId = logs.groupBy { it.doId }
+            filteredLibraryDos.associate { doItem ->
+                val logForThisDo = logsByDoId[doItem.id]?.find { l ->
+                    if (doItem.isMeasurable) l.value >= doItem.targetValue else l.value >= 1f
+                }
+                doItem.id to logForThisDo
+            }
+        } else {
+            emptyMap()
         }
     }
 
@@ -1444,7 +1468,7 @@ fun AgendaScreen(
                         }
                     }
                     items(sectionItems, key = { doItem -> "${sectionTitle}_${doItem.id}" }) { doItem ->
-                        val log = logs.find { it.doId == doItem.id && it.date == selectedDate }
+                        val log = logsForSelectedDateMap[doItem.id]
                         val currentValueOnSelectedDate = log?.value ?: 0f
                         val isCompletedOnSelectedDate = if (doItem.isMeasurable) {
                             currentValueOnSelectedDate >= doItem.targetValue
@@ -1453,9 +1477,7 @@ fun AgendaScreen(
                         }
 
                         val completedLogAnyDay = if (isAllTimeLibrarySelected) {
-                            logs.filter { it.doId == doItem.id }.find { l ->
-                                if (doItem.isMeasurable) l.value >= doItem.targetValue else l.value >= 1f
-                            }
+                            completedLogAnyDayMap[doItem.id]
                         } else {
                             null
                         }
@@ -4030,8 +4052,9 @@ fun AnalyticsScreen(
         val completedToday = remember(dos, logs) {
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val todayStr = sdf.format(Date())
+            val logsForTodayMap = logs.filter { it.date == todayStr }.associateBy { it.doId }
             dos.count { doItem ->
-                val log = logs.find { it.doId == doItem.id && it.date == todayStr }
+                val log = logsForTodayMap[doItem.id]
                 if (doItem.isMeasurable) {
                     (log?.value ?: 0f) >= doItem.targetValue
                 } else {
@@ -4263,6 +4286,8 @@ fun WeeklyTrendBarChartCard(logs: List<DoLog>) {
         val cal = Calendar.getInstance()
         val dataList = mutableListOf<Pair<String, Int>>() // Day Label to Count
         
+        val logsByDateMap = logs.filter { it.value > 0f }.groupBy { it.date }
+        
         // Fetch last 7 days starting from 6 days ago up to today
         cal.add(Calendar.DAY_OF_YEAR, -6)
         val dayLabelFormat = SimpleDateFormat("EEE", Locale.getDefault())
@@ -4270,7 +4295,7 @@ fun WeeklyTrendBarChartCard(logs: List<DoLog>) {
         for (i in 0..6) {
             val dateStr = sdf.format(cal.time)
             val dayLabel = dayLabelFormat.format(cal.time)
-            val count = logs.count { it.date == dateStr && it.value > 0f }
+            val count = logsByDateMap[dateStr]?.size ?: 0
             dataList.add(Pair(dayLabel, count))
             cal.add(Calendar.DAY_OF_YEAR, 1)
         }
@@ -4434,6 +4459,21 @@ fun AddEditDoDialog(
     val sharedPrefs = remember(context) { context.getSharedPreferences("add_edit_do_expanded_states", android.content.Context.MODE_PRIVATE) }
     var showPhilosophicalSection by remember { mutableStateOf(sharedPrefs.getBoolean("philosophical_expanded", purpose.isNotBlank() || benefit.isNotBlank() || cost.isNotBlank())) }
     var showRemindersSection by remember { mutableStateOf(sharedPrefs.getBoolean("reminders_expanded", hasReminder || intervalDaysText.isNotBlank())) }
+    var showScheduleSection by remember { mutableStateOf(type == "TASK" || !doToEdit?.targetDate.isNullOrBlank()) }
+    var showCategoryPrioritySection by remember { mutableStateOf(false) }
+    var showGoalSection by remember { mutableStateOf(isMeasurable) }
+
+    LaunchedEffect(type) {
+        if (type == "TASK") {
+            showScheduleSection = true
+        }
+    }
+
+    LaunchedEffect(isMeasurable) {
+        if (isMeasurable) {
+            showGoalSection = true
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -4513,389 +4553,396 @@ fun AddEditDoDialog(
                     }
                 }
 
-                // Schedule Date & Scheduled Time stacked (full-width for generous spacing and readability)
                 item {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = targetDate,
-                            onValueChange = { targetDate = it },
-                            label = { Text(if (type == "TASK") "Target Date" else "Scheduled Date") },
-                            placeholder = { Text("yyyy-MM-dd") },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = LavenderAccent,
-                                focusedLabelColor = LavenderAccent,
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                unfocusedBorderColor = GlassBorder
-                            ),
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        // Quick Date Chips (Equal weights, no vertical compression!)
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            val tomorrowCal = Calendar.getInstance()
-                            val tGregorian = todaySdf.format(tomorrowCal.time)
-                            tomorrowCal.add(Calendar.DAY_OF_YEAR, 1)
-                            val tmGregorian = todaySdf.format(tomorrowCal.time)
-
-                            val tStr = if (isPersianTargetDateOn) {
-                                com.example.ui.PersianCalendarHelper.formatGregorianToJalaliHyphen(tGregorian)
-                            } else {
-                                tGregorian
-                            }
-                            val tmStr = if (isPersianTargetDateOn) {
-                                com.example.ui.PersianCalendarHelper.formatGregorianToJalaliHyphen(tmGregorian)
-                            } else {
-                                tmGregorian
-                            }
-                            
-                            // Today chip
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(if (targetDate == tStr) LavenderAccent.copy(alpha = 0.2f) else DarkSurfaceVariant, RoundedCornerShape(8.dp))
-                                    .border(1.dp, if (targetDate == tStr) LavenderAccent else GlassBorder, RoundedCornerShape(8.dp))
-                                    .clickable { targetDate = tStr }
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("Today", color = if (targetDate == tStr) LavenderAccent else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                            
-                            // Tomorrow chip
-                            Box(
-                                modifier = Modifier
-                                    .weight(1.2f)
-                                    .background(if (targetDate == tmStr) LavenderAccent.copy(alpha = 0.2f) else DarkSurfaceVariant, RoundedCornerShape(8.dp))
-                                    .border(1.dp, if (targetDate == tmStr) LavenderAccent else GlassBorder, RoundedCornerShape(8.dp))
-                                    .clickable { targetDate = tmStr }
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("Tomorrow", color = if (targetDate == tmStr) LavenderAccent else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            // Someday chip
-                            Box(
-                                modifier = Modifier
-                                    .weight(1.1f)
-                                    .background(if (targetDate.isBlank()) LavenderAccent.copy(alpha = 0.2f) else DarkSurfaceVariant, RoundedCornerShape(8.dp))
-                                    .border(1.dp, if (targetDate.isBlank()) LavenderAccent else GlassBorder, RoundedCornerShape(8.dp))
-                                    .clickable { 
-                                        targetDate = ""
-                                        targetTime = ""
-                                    }
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("Someday", color = if (targetDate.isBlank()) LavenderAccent else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
+                    val scheduleSummary = remember(targetDate, targetTime) {
+                        if (targetDate.isNotBlank()) {
+                            "$targetDate" + (if (targetTime.isNotBlank()) " at $targetTime" else "")
+                        } else {
+                            "No schedule set (Someday)"
                         }
                     }
-                }
-
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    AddEditCollapsibleSection(
+                        title = "Schedule (Date & Time)",
+                        summary = scheduleSummary,
+                        icon = Icons.Default.CalendarToday,
+                        isExpanded = showScheduleSection,
+                        onToggle = { showScheduleSection = !showScheduleSection }
                     ) {
-                        OutlinedTextField(
-                            value = targetTime,
-                            onValueChange = { targetTime = it },
-                            label = { Text("Scheduled Time") },
-                            placeholder = { Text("HH:mm") },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = LavenderAccent,
-                                focusedLabelColor = LavenderAccent,
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                unfocusedBorderColor = GlassBorder
-                            ),
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            trailingIcon = {
-                                IconButton(
-                                    onClick = {
-                                        val h24 = when {
-                                            pickerIsPm && pickerHour < 12 -> pickerHour + 12
-                                            !pickerIsPm && pickerHour == 12 -> 0
-                                            pickerIsPm && pickerHour == 12 -> 12
-                                            else -> pickerHour
-                                        }
-                                        targetTime = String.format(Locale.getDefault(), "%02d:%02d", h24, pickerMinute)
-                                    },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.AccessTime,
-                                        contentDescription = "Use Clock Time",
-                                        tint = LavenderAccent,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(
+                                value = targetDate,
+                                onValueChange = { targetDate = it },
+                                label = { Text(if (type == "TASK") "Target Date" else "Scheduled Date") },
+                                placeholder = { Text("yyyy-MM-dd") },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = LavenderAccent,
+                                    focusedLabelColor = LavenderAccent,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    unfocusedBorderColor = GlassBorder
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            
+                            // Quick Date Chips
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                val tomorrowCal = Calendar.getInstance()
+                                val tGregorian = todaySdf.format(tomorrowCal.time)
+                                tomorrowCal.add(Calendar.DAY_OF_YEAR, 1)
+                                val tmGregorian = todaySdf.format(tomorrowCal.time)
+
+                                val tStr = if (isPersianTargetDateOn) {
+                                    com.example.ui.PersianCalendarHelper.formatGregorianToJalaliHyphen(tGregorian)
+                                } else {
+                                    tGregorian
                                 }
-                            }
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        // Quick Time Chips (Equal weights, completely legible!)
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            val times = listOf("08:00" to "Morning", "12:00" to "Noon", "18:00" to "Evening")
-                            times.forEach { (tVal, tLabel) ->
+                                val tmStr = if (isPersianTargetDateOn) {
+                                    com.example.ui.PersianCalendarHelper.formatGregorianToJalaliHyphen(tmGregorian)
+                                } else {
+                                    tmGregorian
+                                }
+                                
+                                // Today chip
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .background(if (targetTime == tVal) LavenderAccent.copy(alpha = 0.2f) else DarkSurfaceVariant, RoundedCornerShape(8.dp))
-                                        .border(1.dp, if (targetTime == tVal) LavenderAccent else GlassBorder, RoundedCornerShape(8.dp))
-                                        .clickable { targetTime = tVal }
+                                        .background(if (targetDate == tStr) LavenderAccent.copy(alpha = 0.2f) else DarkSurfaceVariant, RoundedCornerShape(8.dp))
+                                        .border(1.dp, if (targetDate == tStr) LavenderAccent else GlassBorder, RoundedCornerShape(8.dp))
+                                        .clickable { targetDate = tStr }
                                         .padding(vertical = 10.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(text = tLabel, color = if (targetTime == tVal) LavenderAccent else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("Today", color = if (targetDate == tStr) LavenderAccent else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                
+                                // Tomorrow chip
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1.2f)
+                                        .background(if (targetDate == tmStr) LavenderAccent.copy(alpha = 0.2f) else DarkSurfaceVariant, RoundedCornerShape(8.dp))
+                                        .border(1.dp, if (targetDate == tmStr) LavenderAccent else GlassBorder, RoundedCornerShape(8.dp))
+                                        .clickable { targetDate = tmStr }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Tomorrow", color = if (targetDate == tmStr) LavenderAccent else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                // Someday chip
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1.1f)
+                                        .background(if (targetDate.isBlank()) LavenderAccent.copy(alpha = 0.2f) else DarkSurfaceVariant, RoundedCornerShape(8.dp))
+                                        .border(1.dp, if (targetDate.isBlank()) LavenderAccent else GlassBorder, RoundedCornerShape(8.dp))
+                                        .clickable { 
+                                            targetDate = ""
+                                            targetTime = ""
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Someday", color = if (targetDate.isBlank()) LavenderAccent else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            // Clear time
+
                             Box(
                                 modifier = Modifier
-                                    .weight(0.9f)
-                                    .background(DarkSurfaceVariant, RoundedCornerShape(8.dp))
-                                    .border(1.dp, GlassBorder, RoundedCornerShape(8.dp))
-                                    .clickable { targetTime = "" }
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("Clear", color = DarkTextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-
-                // Measurement Toggle
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text("Measurable Action", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text("Log quantities (e.g. 8 glasses water)", color = DarkTextSecondary, fontSize = 11.sp)
-                        }
-                        Switch(
-                            checked = isMeasurable,
-                            onCheckedChange = { isMeasurable = it },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = LavenderAccent,
-                                checkedTrackColor = DeepPurpleContainer
+                                    .fillMaxWidth()
+                                    .height(1.dp)
+                                    .background(GlassBorder.copy(alpha = 0.2f))
                             )
-                        )
-                    }
-                }
 
-                if (isMeasurable) {
-                    item {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
                             OutlinedTextField(
-                                value = targetValue,
-                                onValueChange = { targetValue = it },
-                                label = { Text("Target Goal") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                value = targetTime,
+                                onValueChange = { targetTime = it },
+                                label = { Text("Scheduled Time") },
+                                placeholder = { Text("HH:mm") },
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = LavenderAccent,
+                                    focusedLabelColor = LavenderAccent,
                                     focusedTextColor = Color.White,
                                     unfocusedTextColor = Color.White,
                                     unfocusedBorderColor = GlassBorder
                                 ),
-                                modifier = Modifier.weight(1f),
-                                singleLine = true
-                            )
-                            OutlinedTextField(
-                                value = unit,
-                                onValueChange = { unit = it },
-                                label = { Text("Unit (e.g., cups)") },
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = LavenderAccent,
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    unfocusedBorderColor = GlassBorder
-                                ),
-                                modifier = Modifier.weight(1f),
-                                singleLine = true
-                            )
-                        }
-                    }
-                }
-
-                // Category Selection
-                item {
-                    Text("Category (Select one or more)", color = DarkTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp)
-                    ) {
-                        items(CategoryRegistry.categories) { cat ->
-                            val isSelected = selectedCategories.contains(cat.name)
-                            Card(
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isSelected) cat.color else DarkSurfaceVariant
-                                ),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .clickable {
-                                        val current = selectedCategories.toMutableList()
-                                        if (current.contains(cat.name)) {
-                                            if (current.size > 1) {
-                                                current.remove(cat.name)
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = {
+                                            val h24 = when {
+                                                pickerIsPm && pickerHour < 12 -> pickerHour + 12
+                                                !pickerIsPm && pickerHour == 12 -> 0
+                                                pickerIsPm && pickerHour == 12 -> 12
+                                                else -> pickerHour
                                             }
-                                        } else {
-                                            current.add(cat.name)
-                                        }
-                                        selectedCategories = current
-                                    }
-                                    .testTag("category_select_${cat.name}")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = cat.icon,
-                                        contentDescription = null,
-                                        tint = if (isSelected) Color.Black else cat.color,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Text(
-                                        text = cat.name,
-                                        color = if (isSelected) Color.Black else Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Priority Selector (Custom Segmented Round-Cornered Layout)
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Priority Level", color = DarkTextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            val priorities = listOf("1" to "High", "2" to "Medium", "3" to "Low", "4" to "None")
-                            priorities.forEach { (pr, prLabel) ->
-                                val isSelected = priority == pr || (pr == "1" && priority == "HIGH") || (pr == "2" && priority == "MEDIUM") || (pr == "3" && priority == "LOW")
-                                val prColor = when (pr) {
-                                    "1" -> Color(0xFFFF5252)
-                                    "2" -> Color(0xFFFFAB40)
-                                    "3" -> Color(0xFF448AFF)
-                                    "4" -> Color(0xFFAB47BC)
-                                    else -> DarkTextSecondary
-                                }
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (isSelected) prColor.copy(alpha = 0.25f) else DarkSurfaceVariant)
-                                        .border(
-                                            width = 1.dp,
-                                            color = if (isSelected) prColor else GlassBorder,
-                                            shape = RoundedCornerShape(8.dp)
+                                            targetTime = String.format(Locale.getDefault(), "%02d:%02d", h24, pickerMinute)
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AccessTime,
+                                            contentDescription = "Use Clock Time",
+                                            tint = LavenderAccent,
+                                            modifier = Modifier.size(18.dp)
                                         )
-                                        .clickable { priority = pr }
-                                        .padding(vertical = 10.dp)
-                                        .testTag("priority_button_$pr")
-                                ) {
-                                    Text(
-                                        text = prLabel,
-                                        color = if (isSelected) prColor else Color.White,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    }
                                 }
-                            }
-                        }
-                    }
-                }
-
-                // Collapsible: Details (Optional)
-                item {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, GlassBorder, RoundedCornerShape(12.dp))
-                            .clickable { 
-                                showPhilosophicalSection = !showPhilosophicalSection
-                                sharedPrefs.edit().putBoolean("philosophical_expanded", showPhilosophicalSection).apply()
-                            },
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = LavenderAccent,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Column {
-                                    Text(
-                                        text = "Details",
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Why, benefit, cost, or personal motivation (Optional)",
-                                        color = DarkTextSecondary,
-                                        fontSize = 10.sp
-                                    )
-                                }
-                            }
-                            Icon(
-                                imageVector = if (showPhilosophicalSection) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                contentDescription = if (showPhilosophicalSection) "Collapse" else "Expand",
-                                tint = LavenderAccent,
-                                modifier = Modifier.size(20.dp)
                             )
+
+                            // Quick Time Chips
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                val times = listOf("08:00" to "Morning", "12:00" to "Noon", "18:00" to "Evening")
+                                times.forEach { (tVal, tLabel) ->
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .background(if (targetTime == tVal) LavenderAccent.copy(alpha = 0.2f) else DarkSurfaceVariant, RoundedCornerShape(8.dp))
+                                            .border(1.dp, if (targetTime == tVal) LavenderAccent else GlassBorder, RoundedCornerShape(8.dp))
+                                            .clickable { targetTime = tVal }
+                                            .padding(vertical = 10.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(text = tLabel, color = if (targetTime == tVal) LavenderAccent else Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                // Clear time
+                                Box(
+                                    modifier = Modifier
+                                        .weight(0.9f)
+                                        .background(DarkSurfaceVariant, RoundedCornerShape(8.dp))
+                                        .border(1.dp, GlassBorder, RoundedCornerShape(8.dp))
+                                        .clickable { targetTime = "" }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Clear", color = DarkTextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
                 }
 
-                if (showPhilosophicalSection) {
-                    item {
+                item {
+                    val goalSummary = remember(isMeasurable, targetValue, unit) {
+                        if (isMeasurable) {
+                            "Target: $targetValue ${unit.ifBlank { "units" }}"
+                        } else {
+                            "Simple Checkbox (Binary Done/Not Done)"
+                        }
+                    }
+                    AddEditCollapsibleSection(
+                        title = "Measurable Goal",
+                        summary = goalSummary,
+                        icon = Icons.Default.BarChart,
+                        isExpanded = showGoalSection,
+                        onToggle = { showGoalSection = !showGoalSection }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Measurable Action", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("Log quantities (e.g. 8 glasses water)", color = DarkTextSecondary, fontSize = 11.sp)
+                                }
+                                Switch(
+                                    checked = isMeasurable,
+                                    onCheckedChange = { isMeasurable = it },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = LavenderAccent,
+                                        checkedTrackColor = DeepPurpleContainer
+                                    )
+                                )
+                            }
+                            
+                            if (isMeasurable) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(GlassBorder.copy(alpha = 0.2f))
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    OutlinedTextField(
+                                        value = targetValue,
+                                        onValueChange = { targetValue = it },
+                                        label = { Text("Target Goal") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = LavenderAccent,
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            unfocusedBorderColor = GlassBorder
+                                        ),
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = unit,
+                                        onValueChange = { unit = it },
+                                        label = { Text("Unit (e.g., cups)") },
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = LavenderAccent,
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            unfocusedBorderColor = GlassBorder
+                                        ),
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    val catPrioritySummary = remember(selectedCategories, priority) {
+                        val cats = if (selectedCategories.isNotEmpty()) selectedCategories.joinToString(", ") else "None"
+                        val prioLabel = when (priority) {
+                            "1", "HIGH" -> "High"
+                            "2", "MEDIUM" -> "Medium"
+                            "3", "LOW" -> "Low"
+                            else -> "None"
+                        }
+                        "$cats · $prioLabel Priority"
+                    }
+                    AddEditCollapsibleSection(
+                        title = "Category & Priority",
+                        summary = catPrioritySummary,
+                        icon = Icons.Default.Label,
+                        isExpanded = showCategoryPrioritySection,
+                        onToggle = { showCategoryPrioritySection = !showCategoryPrioritySection }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Category (Select one or more)", color = DarkTextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(CategoryRegistry.categories) { cat ->
+                                    val isSelected = selectedCategories.contains(cat.name)
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSelected) cat.color else DarkSurfaceVariant
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .clickable {
+                                                val current = selectedCategories.toMutableList()
+                                                if (current.contains(cat.name)) {
+                                                    if (current.size > 1) {
+                                                        current.remove(cat.name)
+                                                    }
+                                                } else {
+                                                    current.add(cat.name)
+                                                }
+                                                selectedCategories = current
+                                            }
+                                            .testTag("category_select_${cat.name}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = cat.icon,
+                                                contentDescription = null,
+                                                tint = if (isSelected) Color.Black else cat.color,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = cat.name,
+                                                color = if (isSelected) Color.Black else Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(1.dp)
+                                    .background(GlassBorder.copy(alpha = 0.2f))
+                            )
+
+                            Text("Priority Level", color = DarkTextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val priorities = listOf("1" to "High", "2" to "Medium", "3" to "Low", "4" to "None")
+                                priorities.forEach { (pr, prLabel) ->
+                                    val isSelected = priority == pr || (pr == "1" && priority == "HIGH") || (pr == "2" && priority == "MEDIUM") || (pr == "3" && priority == "LOW")
+                                    val prColor = when (pr) {
+                                        "1" -> Color(0xFFFF5252)
+                                        "2" -> Color(0xFFFFAB40)
+                                        "3" -> Color(0xFF448AFF)
+                                        "4" -> Color(0xFFAB47BC)
+                                        else -> DarkTextSecondary
+                                    }
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isSelected) prColor.copy(alpha = 0.25f) else DarkSurfaceVariant)
+                                            .border(
+                                                width = 1.dp,
+                                                color = if (isSelected) prColor else GlassBorder,
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .clickable { priority = pr }
+                                            .padding(vertical = 10.dp)
+                                            .testTag("priority_button_$pr")
+                                    ) {
+                                        Text(
+                                            text = prLabel,
+                                            color = if (isSelected) prColor else Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    val detailsSummary = remember(purpose) {
+                        if (purpose.isNotBlank()) {
+                            "Motivation notes added"
+                        } else {
+                            "Optional notes, benefit & obstacles"
+                        }
+                    }
+                    AddEditCollapsibleSection(
+                        title = "Motivation & Details",
+                        summary = detailsSummary,
+                        icon = Icons.Default.Info,
+                        isExpanded = showPhilosophicalSection,
+                        onToggle = {
+                            showPhilosophicalSection = !showPhilosophicalSection
+                            sharedPrefs.edit().putBoolean("philosophical_expanded", showPhilosophicalSection).apply()
+                        }
+                    ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -4933,68 +4980,29 @@ fun AddEditDoDialog(
                     }
                 }
 
-                // Collapsible: Advanced Reminders & Snooze
                 item {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, GlassBorder, RoundedCornerShape(12.dp))
-                            .clickable { 
-                                showRemindersSection = !showRemindersSection
-                                sharedPrefs.edit().putBoolean("reminders_expanded", showRemindersSection).apply()
-                            },
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Notifications,
-                                    contentDescription = null,
-                                    tint = LavenderAccent,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Column {
-                                    Text(
-                                        text = "Advanced Reminders, Snooze & Sounds",
-                                        color = Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Set auditory cues & snooze strategies (Optional)",
-                                        color = DarkTextSecondary,
-                                        fontSize = 10.sp
-                                    )
-                                }
-                            }
-                            Icon(
-                                imageVector = if (showRemindersSection) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                contentDescription = if (showRemindersSection) "Collapse" else "Expand",
-                                tint = LavenderAccent,
-                                modifier = Modifier.size(20.dp)
-                            )
+                    val remindersSummary = remember(hasReminder, reminderTimes, intervalDaysText) {
+                        if (hasReminder && reminderTimes.isNotEmpty()) {
+                            val daysInfo = if (selectedDays.isEmpty()) "Everyday" else "${selectedDays.size} days/wk"
+                            "${reminderTimes.size} reminder(s) ($daysInfo)"
+                        } else if (intervalDaysText.isNotBlank() && (intervalDaysText.toIntOrNull() ?: 0) > 0) {
+                            "Every $intervalDaysText days"
+                        } else {
+                            "No alerts or audio cues"
                         }
                     }
-                }
-
-                if (showRemindersSection) {
-                    item {
+                    AddEditCollapsibleSection(
+                        title = "Advanced Reminders & Alerts",
+                        summary = remindersSummary,
+                        icon = Icons.Default.Notifications,
+                        isExpanded = showRemindersSection,
+                        onToggle = {
+                            showRemindersSection = !showRemindersSection
+                            sharedPrefs.edit().putBoolean("reminders_expanded", showRemindersSection).apply()
+                        }
+                    ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -5524,3 +5532,92 @@ fun AddEditDoDialog(
         }
     )
 }
+
+@Composable
+fun AddEditCollapsibleSection(
+    title: String,
+    summary: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, GlassBorder, RoundedCornerShape(16.dp)),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isExpanded) Color(0xFF1E2129) else Color(0xFF15171C)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggle() }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(LavenderAccent.copy(alpha = 0.1f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = LavenderAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = title,
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = summary,
+                            color = if (isExpanded) LavenderAccent.copy(alpha = 0.8f) else DarkTextSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = LavenderAccent,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            if (isExpanded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(GlassBorder.copy(alpha = 0.4f))
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    content()
+                }
+            }
+        }
+    }
+}
+

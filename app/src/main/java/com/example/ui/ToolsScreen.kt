@@ -1702,7 +1702,7 @@ fun DoNothingScreen(
     viewModel: DoViewModel,
     onBack: () -> Unit
 ) {
-    val logs by viewModel.doNothingLogs.collectAsState()
+    val logs by viewModel.doNothingLogs.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     
     var isPracticing by remember { mutableStateOf(false) }
@@ -2308,7 +2308,7 @@ fun MeasurementTrackerScreen(
     viewModel: DoViewModel,
     onBack: () -> Unit
 ) {
-    val trackers by viewModel.measurementTrackers.collectAsState()
+    val trackers by viewModel.measurementTrackers.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var selectedTrackerId by remember { mutableStateOf<Long?>(null) }
@@ -2323,11 +2323,14 @@ fun MeasurementTrackerScreen(
     val activeTracker = trackers.find { it.id == selectedTrackerId } ?: trackers.firstOrNull()
 
     // Observe logs for active tracker
-    val logs = if (activeTracker != null) {
-        viewModel.getLogsForTracker(activeTracker.id).collectAsState(initial = emptyList()).value
-    } else {
-        emptyList()
+    val logsFlow = remember(activeTracker?.id) {
+        if (activeTracker != null) {
+            viewModel.getLogsForTracker(activeTracker.id)
+        } else {
+            kotlinx.coroutines.flow.flowOf(emptyList())
+        }
     }
+    val logs by logsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     // State for dialogs
     var showAddTrackerDialog by remember { mutableStateOf(false) }
@@ -3705,8 +3708,8 @@ fun AffirmationCounterScreen(
     viewModel: DoViewModel,
     onBack: () -> Unit
 ) {
-    val categories by viewModel.affirmationCategories.collectAsState()
-    val logs by viewModel.affirmationLogs.collectAsState()
+    val categories by viewModel.affirmationCategories.collectAsStateWithLifecycle()
+    val logs by viewModel.affirmationLogs.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var selectedCategoryIdForSession by remember { mutableStateOf<Long?>(null) }
@@ -3827,7 +3830,7 @@ fun AffirmationCounterScreen(
                         } else {
                             items(categories) { category ->
                                 val itemsFlow = remember(category.id) { viewModel.getAffirmationsForCategoryFlow(category.id) }
-                                val items by itemsFlow.collectAsState(initial = emptyList())
+                                val items by itemsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
                                 Card(
                                     shape = RoundedCornerShape(16.dp),
@@ -4165,7 +4168,7 @@ fun AffirmationCounterScreen(
     // Dialog: Manage Sentences in Category
     selectedCategoryForManagement?.let { category ->
         val itemsFlow = remember(category.id) { viewModel.getAffirmationsForCategoryFlow(category.id) }
-        val items by itemsFlow.collectAsState(initial = emptyList())
+        val items by itemsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
         var newBatchText by remember { mutableStateOf("") }
         var showAddPanel by remember { mutableStateOf(false) }
 
@@ -4268,7 +4271,7 @@ fun ActiveAffirmationSession(
     onClose: () -> Unit
 ) {
     val itemsFlow = remember(categoryId) { viewModel.getAffirmationsForCategoryFlow(categoryId) }
-    val items by itemsFlow.collectAsState(initial = emptyList())
+    val items by itemsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     var shuffledItems by remember { mutableStateOf<List<AffirmationItem>>(emptyList()) }
     var currentIndex by remember { mutableStateOf(0) }
