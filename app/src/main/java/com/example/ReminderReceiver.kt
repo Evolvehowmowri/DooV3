@@ -16,27 +16,49 @@ class ReminderReceiver : BroadcastReceiver() {
         val doName = intent.getStringExtra("do_name") ?: "Reminder"
         val reminderNote = intent.getStringExtra("reminder_note") ?: ""
         val reminderSound = intent.getStringExtra("reminder_sound") ?: "Default Accent"
+        val alarmCycle = intent.getIntExtra("alarm_cycle", 1)
+        val isSnoozeTrigger = intent.getBooleanExtra("is_snooze_trigger", false)
 
-        Log.d("ReminderReceiver", "Alarm received for doId: $doId, name: $doName")
+        Log.d("ReminderReceiver", "Alarm received for doId: $doId, name: $doName, cycle: $alarmCycle, isSnooze: $isSnoozeTrigger")
 
         if (doId != -1) {
-            // Post the notification
-            ReminderManager.showNotification(
-                context = context,
-                doId = doId,
-                title = doName,
-                message = reminderNote,
-                soundName = reminderSound
-            )
-
-            // Reschedule the next alarm in the background
             val pendingResult = goAsync()
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val db = DoDatabase.getDatabase(context)
                     val doItem = db.doDao().getDoById(doId)
                     if (doItem != null && !doItem.isArchived && doItem.reminderTime != null) {
-                        ReminderManager.scheduleAlarmsForDo(context, doItem)
+                        val config = CustomReminderConfig.fromString(doItem.reminderTime)
+                        
+                        if (config.enableRingingAlarm) {
+                            CoroutineScope(Dispatchers.Main).launch {
+                                AlarmSoundPlayer.startAlarm(context, doId, doName, config, alarmCycle)
+                            }
+                        } else {
+                            ReminderManager.showNotification(
+                                context = context,
+                                doId = doId,
+                                title = doName,
+                                message = reminderNote,
+                                soundName = reminderSound
+                            )
+                        }
+
+                        // Reschedule next daily occurrence if NOT a snooze trigger
+                        if (!isSnoozeTrigger) {
+                            ReminderManager.scheduleAlarmsForDo(context, doItem)
+                        }
+                    } else {
+                        // Fallback simple notification if doItem is deleted/archived
+                        if (!isSnoozeTrigger) {
+                            ReminderManager.showNotification(
+                                context = context,
+                                doId = doId,
+                                title = doName,
+                                message = reminderNote,
+                                soundName = reminderSound
+                            )
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e("ReminderReceiver", "Error rescheduling alarm", e)

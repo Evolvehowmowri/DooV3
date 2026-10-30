@@ -2,12 +2,14 @@ package com.example.ui
 
 import android.os.CountDownTimer
 import androidx.compose.animation.*
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.ui.theme.*
 import kotlinx.coroutines.delay
 import com.example.data.DoNothingLog
@@ -47,6 +50,9 @@ import java.util.Calendar
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import java.util.Locale
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.material.icons.automirrored.filled.*
 
 val OrangeAccent = Color(0xFFFF9800)
 val Purple40 = Color(0xFF6650a4)
@@ -552,7 +558,7 @@ fun AlgoCareScreen(
 
     fun navigateBack() {
         if (stepHistory.isNotEmpty()) {
-            currentStep = stepHistory.removeLast()
+            currentStep = stepHistory.removeAt(stepHistory.size - 1)
         } else {
             onBack()
         }
@@ -1378,54 +1384,270 @@ fun ActionButton(
 
 // ---------------- BREATHING BUDDY ----------------
 
+enum class BreathPhase(val displayName: String, val subtitle: String) {
+    INHALE("Breathe In", "Slowly expand your lungs and chest"),
+    HOLD_IN("Hold", "Rest in the gentle stillness within"),
+    EXHALE("Breathe Out", "Release all tension and let go"),
+    HOLD_OUT("Sustain", "Rest in empty, quiet peace"),
+    READY("Get Ready", "Find a comfortable posture and relax")
+}
+
+data class BreathingTechnique(
+    val name: String,
+    val description: String,
+    val inhale: Int,
+    val hold1: Int,
+    val exhale: Int,
+    val hold2: Int,
+    val color: Color,
+    val category: String,
+    val emoji: String
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BreathingBuddyScreen(
     onBack: () -> Unit
 ) {
-    var phase by remember { mutableStateOf("Inhale") }
-    var countdown by remember { mutableStateOf(4) }
-    var isRunning by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
 
-    // Coroutine loop for breath phase progression
-    LaunchedEffect(isRunning) {
-        if (!isRunning) return@LaunchedEffect
-        while (isRunning) {
-            phase = "Inhale"
-            for (i in 4 downTo 1) {
-                countdown = i
-                delay(1000)
-            }
-            phase = "Hold"
-            for (i in 4 downTo 1) {
-                countdown = i
-                delay(1000)
-            }
-            phase = "Exhale"
-            for (i in 4 downTo 1) {
-                countdown = i
-                delay(1000)
-            }
-            phase = "Hold"
-            for (i in 4 downTo 1) {
-                countdown = i
-                delay(1000)
+    // Set of professional breathing techniques
+    val techniques = remember {
+        listOf(
+            BreathingTechnique(
+                name = "Box Breathing (4-4-4-4)",
+                description = "Equal parts inhale, hold, exhale, hold. Cleans mental fog, reduces acute stress, and restores balanced focus.",
+                inhale = 4,
+                hold1 = 4,
+                exhale = 4,
+                hold2 = 4,
+                color = Color(0xFFA8C7FA),
+                category = "Focus",
+                emoji = "🟩"
+            ),
+            BreathingTechnique(
+                name = "4-7-8 Sleep Pacing",
+                description = "Inhale 4s, hold 7s, exhale 8s. A powerful tranquilizer for the nervous system, helpful for insomnia and anxiety.",
+                inhale = 4,
+                hold1 = 7,
+                exhale = 8,
+                hold2 = 0,
+                color = Color(0xFFD0BCFF),
+                category = "Sleep / Anxiety",
+                emoji = "🌙"
+            ),
+            BreathingTechnique(
+                name = "Coherent Flow (5-5)",
+                description = "Equal parts inhale and exhale. Optimizes respiratory efficiency, enhances heart-rate variability, and calms body tension.",
+                inhale = 5,
+                hold1 = 0,
+                exhale = 5,
+                hold2 = 0,
+                color = Color(0xFF81C784),
+                category = "Harmony",
+                emoji = "🌊"
+            ),
+            BreathingTechnique(
+                name = "Awakening Breath (6-2-7)",
+                description = "Inhale 6s, short hold 2s, exhale 7s. Warms up lung capacity, increases blood flow, and provides clean energy.",
+                inhale = 6,
+                hold1 = 2,
+                exhale = 7,
+                hold2 = 0,
+                color = Color(0xFFFFB74D),
+                category = "Energize",
+                emoji = "⚡"
+            ),
+            BreathingTechnique(
+                name = "Calming Ground (4-2-4)",
+                description = "Inhale 4s, hold 2s, exhale 4s. Gentle stabilizing rhythm perfect for introductory meditation anchors.",
+                inhale = 4,
+                hold1 = 2,
+                exhale = 4,
+                hold2 = 0,
+                color = Color(0xFF4DD0E1),
+                category = "Grounding",
+                emoji = "🌱"
+            )
+        )
+    }
+
+    val durationOptions = remember {
+        listOf(
+            Pair("1 min", 60),
+            Pair("2 min", 120),
+            Pair("5 min", 300),
+            Pair("10 min", 600),
+            Pair("Infinite", -1)
+        )
+    }
+
+    // Interactive settings states
+    var selectedTechnique by remember { mutableStateOf(techniques[0]) }
+    var selectedDurationIndex by remember { mutableStateOf(1) } // Default to 2 minutes
+    var useAudioGuide by remember { mutableStateOf(true) }
+    var useHaptics by remember { mutableStateOf(true) }
+
+    // Active session running state
+    var isRunning by remember { mutableStateOf(false) }
+    var currentPhase by remember { mutableStateOf(BreathPhase.READY) }
+    var phaseCountdown by remember { mutableStateOf(0) }
+    var phaseTotalDuration by remember { mutableStateOf(1) }
+
+    // Statistics state
+    var completedCyclesCount by remember { mutableStateOf(0) }
+    var totalElapsedSeconds by remember { mutableStateOf(0) }
+    var sessionTimeLeft by remember { mutableStateOf(0) }
+    var showCompletionSummary by remember { mutableStateOf(false) }
+
+    // Clean tone player helper using standard android ToneGenerator
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val playTransitionTone = remember {
+        {
+            try {
+                val toneG = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 60)
+                toneG.startTone(android.media.ToneGenerator.TONE_CDMA_PIP, 120)
+            } catch (e: Exception) {
+                // Ignore fallback
             }
         }
     }
 
-    // Interactive custom scale depending on phase
+    // Dynamic scale depending on the exact active phase
+    val phaseDurationMs = remember(currentPhase, selectedTechnique) {
+        when (currentPhase) {
+            BreathPhase.INHALE -> selectedTechnique.inhale * 1000
+            BreathPhase.HOLD_IN -> selectedTechnique.hold1 * 1000
+            BreathPhase.EXHALE -> selectedTechnique.exhale * 1000
+            BreathPhase.HOLD_OUT -> selectedTechnique.hold2 * 1000
+            else -> 1000
+        }
+    }
+
     val breathingScale by animateFloatAsState(
-        targetValue = when {
-            !isRunning -> 1.0f
-            phase == "Inhale" -> 1.8f
-            phase == "Exhale" -> 1.0f
-            phase == "Hold" && countdown == 4 && isRunning -> 1.8f // keep expanded or contracted
-            else -> 1.4f
+        targetValue = when (currentPhase) {
+            BreathPhase.INHALE -> 1.8f
+            BreathPhase.HOLD_IN -> 1.8f
+            BreathPhase.EXHALE -> 1.0f
+            BreathPhase.HOLD_OUT -> 1.0f
+            else -> 1.2f
         },
-        animationSpec = androidx.compose.animation.core.tween<Float>(durationMillis = 4000),
+        animationSpec = tween(durationMillis = if (phaseDurationMs > 0) phaseDurationMs else 1000, easing = LinearEasing),
         label = "BreathCircleScale"
     )
+
+    // Smooth clockwise countdown progress
+    val phaseProgress = if (phaseTotalDuration > 0) {
+        ((phaseTotalDuration - phaseCountdown).toFloat() / phaseTotalDuration.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    val smoothProgress by animateFloatAsState(
+        targetValue = phaseProgress,
+        animationSpec = tween(durationMillis = 1000, easing = LinearEasing),
+        label = "SmoothPhaseProgress"
+    )
+
+    // Coroutine loop for breath progression
+    LaunchedEffect(isRunning, selectedTechnique) {
+        if (!isRunning) {
+            currentPhase = BreathPhase.READY
+            phaseCountdown = 0
+            phaseTotalDuration = 1
+            return@LaunchedEffect
+        }
+
+        while (isRunning) {
+            // 1. INHALE
+            if (selectedTechnique.inhale > 0 && isRunning) {
+                currentPhase = BreathPhase.INHALE
+                phaseTotalDuration = selectedTechnique.inhale
+                for (i in selectedTechnique.inhale downTo 1) {
+                    phaseCountdown = i
+                    if (i == selectedTechnique.inhale) {
+                        if (useAudioGuide) playTransitionTone()
+                        if (useHaptics) {
+                            try { haptic.performHapticFeedback(HapticFeedbackType.LongPress) } catch (e: Exception) {}
+                        }
+                    }
+                    delay(1000)
+                }
+            }
+
+            // 2. HOLD IN
+            if (selectedTechnique.hold1 > 0 && isRunning) {
+                currentPhase = BreathPhase.HOLD_IN
+                phaseTotalDuration = selectedTechnique.hold1
+                for (i in selectedTechnique.hold1 downTo 1) {
+                    phaseCountdown = i
+                    if (i == selectedTechnique.hold1) {
+                        if (useAudioGuide) playTransitionTone()
+                        if (useHaptics) {
+                            try { haptic.performHapticFeedback(HapticFeedbackType.LongPress) } catch (e: Exception) {}
+                        }
+                    }
+                    delay(1000)
+                }
+            }
+
+            // 3. EXHALE
+            if (selectedTechnique.exhale > 0 && isRunning) {
+                currentPhase = BreathPhase.EXHALE
+                phaseTotalDuration = selectedTechnique.exhale
+                for (i in selectedTechnique.exhale downTo 1) {
+                    phaseCountdown = i
+                    if (i == selectedTechnique.exhale) {
+                        if (useAudioGuide) playTransitionTone()
+                        if (useHaptics) {
+                            try { haptic.performHapticFeedback(HapticFeedbackType.LongPress) } catch (e: Exception) {}
+                        }
+                    }
+                    delay(1000)
+                }
+            }
+
+            // 4. HOLD OUT
+            if (selectedTechnique.hold2 > 0 && isRunning) {
+                currentPhase = BreathPhase.HOLD_OUT
+                phaseTotalDuration = selectedTechnique.hold2
+                for (i in selectedTechnique.hold2 downTo 1) {
+                    phaseCountdown = i
+                    if (i == selectedTechnique.hold2) {
+                        if (useAudioGuide) playTransitionTone()
+                        if (useHaptics) {
+                            try { haptic.performHapticFeedback(HapticFeedbackType.LongPress) } catch (e: Exception) {}
+                        }
+                    }
+                    delay(1000)
+                }
+            }
+
+            if (isRunning) {
+                completedCyclesCount++
+            }
+        }
+    }
+
+    // Parallel overall session timer
+    LaunchedEffect(isRunning) {
+        if (!isRunning) return@LaunchedEffect
+        while (isRunning) {
+            delay(1000)
+            if (isRunning) {
+                totalElapsedSeconds++
+                if (sessionTimeLeft != -1) {
+                    if (sessionTimeLeft > 0) {
+                        sessionTimeLeft--
+                        if (sessionTimeLeft == 0) {
+                            isRunning = false
+                            showCompletionSummary = true
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -1441,97 +1663,653 @@ fun BreathingBuddyScreen(
         },
         containerColor = Color.Transparent
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(24.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "Box Breathing Reset",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp
-                )
-                Text(
-                    text = "Equal parts inhale, hold, exhale, hold. Simple and calming.",
-                    color = DarkTextSecondary,
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-
-            // Interactive Circle Visual
-            Box(
-                modifier = Modifier
-                    .size(240.dp)
-                    .clip(CircleShape)
-                    .background(Color.Transparent),
-                contentAlignment = Alignment.Center
-            ) {
-                // Expanding glowing ripple background
-                Box(
+            if (!isRunning) {
+                // Setup Menu Configuration Layout
+                Column(
                     modifier = Modifier
-                        .size((120 * breathingScale).dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    LightBlueAccent.copy(alpha = 0.4f),
-                                    LightBlueAccent.copy(alpha = 0.05f)
-                                )
-                            )
-                        )
-                )
-
-                // Main Core Breathing Circle
-                Box(
-                    modifier = Modifier
-                        .size((80 * breathingScale).dp)
-                        .clip(CircleShape)
-                        .background(LightBlueAccent)
-                        .border(4.dp, Color.White.copy(alpha = 0.3f), CircleShape),
-                    contentAlignment = Alignment.Center
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
+                    // Title Hero Card
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.02f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, GlassBorder, RoundedCornerShape(24.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF64B5F6).copy(alpha = 0.1f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Hearing,
+                                        contentDescription = null,
+                                        tint = Color(0xFF64B5F6),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "CONSCIOUS BREATHING SPACE",
+                                    color = Color(0xFF64B5F6),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp
+                                )
+                            }
+                            Text(
+                                text = "Train your breath to transform your state. Choose from scientific breath cycles below to restore immediate mental clarity and soothe your amygdala.",
+                                color = DarkTextSecondary,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
+
+                    // Section 1: Select Technique
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "SELECT BREATHING TECHNIQUE",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+
+                        techniques.forEach { technique ->
+                            val isSelected = selectedTechnique.name == technique.name
+                            val accentColor = technique.color
+
+                            Card(
+                                shape = RoundedCornerShape(18.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) accentColor.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.02f)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected) accentColor.copy(alpha = 0.4f) else GlassBorder,
+                                        shape = RoundedCornerShape(18.dp)
+                                    )
+                                    .clickable {
+                                        selectedTechnique = technique
+                                        try { haptic.performHapticFeedback(HapticFeedbackType.LongPress) } catch (e: Exception) {}
+                                    }
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = technique.emoji,
+                                                fontSize = 18.sp
+                                            )
+                                            Text(
+                                                text = technique.name,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp
+                                            )
+                                        }
+
+                                        // Category Pill
+                                        Box(
+                                            modifier = Modifier
+                                                .background(accentColor.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                                                .border(0.5.dp, accentColor.copy(alpha = 0.25f), RoundedCornerShape(8.dp))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = technique.category.uppercase(),
+                                                color = accentColor,
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                letterSpacing = 0.5.sp
+                                            )
+                                        }
+                                    }
+
+                                    Text(
+                                        text = technique.description,
+                                        color = DarkTextSecondary,
+                                        fontSize = 11.sp,
+                                        lineHeight = 15.sp
+                                    )
+
+                                    // Timeline flow preview pills
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("FLOW:", color = Color.White.copy(alpha = 0.3f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        
+                                        if (technique.inhale > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text("Inhale ${technique.inhale}s", color = Color.White.copy(alpha = 0.8f), fontSize = 9.sp)
+                                            }
+                                        }
+                                        if (technique.hold1 > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color(0xFFFFD54F).copy(alpha = 0.1f), RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text("Hold ${technique.hold1}s", color = Color(0xFFFFD54F), fontSize = 9.sp)
+                                            }
+                                        }
+                                        if (technique.exhale > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text("Exhale ${technique.exhale}s", color = Color.White.copy(alpha = 0.8f), fontSize = 9.sp)
+                                            }
+                                        }
+                                        if (technique.hold2 > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color(0xFFFFD54F).copy(alpha = 0.1f), RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text("Hold ${technique.hold2}s", color = Color(0xFFFFD54F), fontSize = 9.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Section 2: Session Duration Selection
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "PRACTICE DURATION",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            durationOptions.forEachIndexed { index, option ->
+                                val isSelected = selectedDurationIndex == index
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(if (isSelected) selectedTechnique.color.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.03f))
+                                        .border(
+                                            width = if (isSelected) 1.5.dp else 1.dp,
+                                            color = if (isSelected) selectedTechnique.color else GlassBorder,
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                        .clickable {
+                                            selectedDurationIndex = index
+                                            try { haptic.performHapticFeedback(HapticFeedbackType.LongPress) } catch (e: Exception) {}
+                                        }
+                                        .padding(vertical = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = option.first,
+                                        color = if (isSelected) selectedTechnique.color else Color.White,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Section 3: Audio & Haptic Assist Toggles
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    ) {
+                        Text(
+                            text = "SENSORY ASSIST CUES",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            letterSpacing = 1.sp,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+
+                        Card(
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.02f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, GlassBorder, RoundedCornerShape(18.dp))
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                // Audio Guide Toggle
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Hearing,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Column {
+                                            Text("Acoustic Guided Beeps", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("Play soft bell sound on state transitions", color = DarkTextSecondary, fontSize = 10.sp)
+                                        }
+                                    }
+                                    Switch(
+                                        checked = useAudioGuide,
+                                        onCheckedChange = { useAudioGuide = it },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = selectedTechnique.color,
+                                            checkedTrackColor = selectedTechnique.color.copy(alpha = 0.3f),
+                                            uncheckedTrackColor = Color.White.copy(alpha = 0.05f)
+                                        )
+                                    )
+                                }
+
+                                HorizontalDivider(color = GlassBorder)
+
+                                // Haptic Vibrations Toggle
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Column {
+                                            Text("Haptic Resonator Taps", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("Gentle micro-vibrations for closed-eyes cue", color = DarkTextSecondary, fontSize = 10.sp)
+                                        }
+                                    }
+                                    Switch(
+                                        checked = useHaptics,
+                                        onCheckedChange = { useHaptics = it },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = selectedTechnique.color,
+                                            checkedTrackColor = selectedTechnique.color.copy(alpha = 0.3f),
+                                            uncheckedTrackColor = Color.White.copy(alpha = 0.05f)
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Big Action Start Button
+                    Button(
+                        onClick = {
+                            // Reset and initiate state
+                            completedCyclesCount = 0
+                            totalElapsedSeconds = 0
+                            val chosenSeconds = durationOptions[selectedDurationIndex].second
+                            sessionTimeLeft = chosenSeconds
+                            isRunning = true
+                            currentPhase = BreathPhase.READY
+                            showCompletionSummary = false
+                        },
+                        shape = RoundedCornerShape(18.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = selectedTechnique.color,
+                            contentColor = Color.Black
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .padding(bottom = 12.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                            Text("Begin Mindful Breathing Session", fontWeight = FontWeight.Black, fontSize = 14.sp)
+                        }
+                    }
+                }
+            } else {
+                // ACTIVE IMMERSIVE BREATHING HUD
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Session Timer Header
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = if (isRunning) phase else "Ready",
-                            color = Color.Black,
+                            text = selectedTechnique.name.uppercase(),
+                            color = selectedTechnique.color,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
+                            fontSize = 11.sp,
+                            letterSpacing = 1.5.sp
                         )
-                        if (isRunning) {
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Countdown or Elapsed minutes
+                        val timeStr = if (sessionTimeLeft == -1) {
+                            val m = totalElapsedSeconds / 60
+                            val s = totalElapsedSeconds % 60
+                            String.format("ELAPSED %02d:%02d", m, s)
+                        } else {
+                            val m = sessionTimeLeft / 60
+                            val s = sessionTimeLeft % 60
+                            String.format("TIME REMAINING %02d:%02d", m, s)
+                        }
+                        Text(
+                            text = timeStr,
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+
+                    // Interactive Organic Glowing Circle Component
+                    Box(
+                        modifier = Modifier
+                            .size(280.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // Outer glowing concentric pulsing ring
+                        Box(
+                            modifier = Modifier
+                                .size((160 * breathingScale).dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(
+                                            selectedTechnique.color.copy(alpha = 0.35f * (breathingScale - 0.2f)),
+                                            selectedTechnique.color.copy(alpha = 0.05f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
+
+                        // 360-degree countdown visual progress ring
+                        CircularProgressIndicator(
+                            progress = { smoothProgress },
+                            modifier = Modifier.size(220.dp),
+                            color = selectedTechnique.color,
+                            strokeWidth = 6.dp,
+                            trackColor = Color.White.copy(alpha = 0.03f)
+                        )
+
+                        // Main core breathing physical sphere
+                        Box(
+                            modifier = Modifier
+                                .size((120 * breathingScale).dp)
+                                .clip(CircleShape)
+                                .background(selectedTechnique.color)
+                                .border(6.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = currentPhase.displayName.uppercase(),
+                                    color = Color.Black,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 15.sp,
+                                    letterSpacing = 0.5.sp
+                                )
+                                if (phaseCountdown > 0) {
+                                    Text(
+                                        text = "$phaseCountdown",
+                                        color = Color.Black,
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 32.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Bottom helpful instruction captions
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             Text(
-                                text = countdown.toString(),
-                                color = Color.Black,
+                                text = currentPhase.subtitle,
+                                color = Color.White,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 24.sp
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center
                             )
+                            Text(
+                                text = "Breath Cycle #$completedCyclesCount completed",
+                                color = DarkTextSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        // Exit/Pause Session button
+                        Button(
+                            onClick = {
+                                isRunning = false
+                                showCompletionSummary = true
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = HighPriorityRed,
+                                contentColor = Color.Black
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Pause, contentDescription = null, tint = Color.Black)
+                                Text("End Mindful Session", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
                         }
                     }
                 }
             }
 
-            // Controls
-            Button(
-                onClick = { isRunning = !isRunning },
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRunning) HighPriorityRed else LavenderAccent,
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-            ) {
-                Text(
-                    text = if (isRunning) "Pause Exercises" else "Start Breathing",
-                    fontWeight = FontWeight.Bold
-                )
+            // Beautiful Modal Session Completion Overlay
+            if (showCompletionSummary) {
+                Dialog(onDismissRequest = { showCompletionSummary = false }) {
+                    Card(
+                        shape = RoundedCornerShape(28.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF161230)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.5.dp, selectedTechnique.color.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(18.dp)
+                        ) {
+                            // Sparkling lotus flower icon
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(selectedTechnique.color.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = selectedTechnique.color,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "Peace Achieved!",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 20.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                Text(
+                                    text = "Conscious breathing practice completed",
+                                    color = DarkTextSecondary,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+
+                            // Dynamic metrics panel
+                            Card(
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.02f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, GlassBorder, RoundedCornerShape(16.dp))
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("DURATION", color = DarkTextSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        val mins = totalElapsedSeconds / 60
+                                        val secs = totalElapsedSeconds % 60
+                                        Text(
+                                            text = String.format("%02d:%02d", mins, secs),
+                                            color = Color.White,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Black
+                                        )
+                                    }
+                                    Box(modifier = Modifier.width(1.dp).height(32.dp).background(GlassBorder))
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("CYCLES", color = DarkTextSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = "$completedCyclesCount",
+                                            color = selectedTechnique.color,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Black
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Calming mindfulness quote
+                            Text(
+                                text = "\"Feelings come and go like clouds in a windy sky. Conscious breathing is my anchor.\"\n— Thich Nhat Hanh",
+                                color = Color.White.copy(alpha = 0.8f),
+                                fontSize = 12.sp,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 18.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+
+                            // Action buttons
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        // Restart session
+                                        completedCyclesCount = 0
+                                        totalElapsedSeconds = 0
+                                        val chosenSeconds = durationOptions[selectedDurationIndex].second
+                                        sessionTimeLeft = chosenSeconds
+                                        isRunning = true
+                                        currentPhase = BreathPhase.READY
+                                        showCompletionSummary = false
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = selectedTechnique.color, contentColor = Color.Black),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                ) {
+                                    Text("Breathe Again", fontWeight = FontWeight.Bold)
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        showCompletionSummary = false
+                                        isRunning = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Close and Back", color = Color.White.copy(alpha = 0.6f))
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -3789,30 +4567,136 @@ fun AffirmationCounterScreen(
                 }
 
                 if (activeTabState == 0) {
+                    // Calculate Daily Overall Total Repetitions
+                    val dailyOverallReps = remember(logs) {
+                        val calendar = Calendar.getInstance()
+                        calendar.set(Calendar.HOUR_OF_DAY, 0)
+                        calendar.set(Calendar.MINUTE, 0)
+                        calendar.set(Calendar.SECOND, 0)
+                        calendar.set(Calendar.MILLISECOND, 0)
+                        val startOfToday = calendar.timeInMillis
+                        logs.filter { it.timestamp >= startOfToday }.sumOf { it.tapCount }
+                    }
+
                     // Categories view
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                         contentPadding = PaddingValues(bottom = 32.dp)
                     ) {
+                        // Hero Card: Overall Daily Affirmation Counter
+                        item {
+                            val encouragingMsg = when {
+                                dailyOverallReps == 0 -> "Step into your power. Nourish your mind with positive alignments today."
+                                dailyOverallReps < 20 -> "Excellent start! Every positive alignment strengthens your neural pathways."
+                                dailyOverallReps < 100 -> "Incredible flow! You are consciously cultivating inner peace today."
+                                else -> "Zen Master level! Your mind is glowing with vibrant, positive energy today."
+                            }
+
+                            Card(
+                                shape = RoundedCornerShape(24.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(
+                                        border = BorderStroke(
+                                            width = 1.dp,
+                                            brush = Brush.linearGradient(
+                                                colors = listOf(
+                                                    Color(0xFFFFB74D).copy(alpha = 0.4f),
+                                                    Color(0xFFD0BCFF).copy(alpha = 0.1f),
+                                                    Color.Transparent
+                                                )
+                                            )
+                                        ),
+                                        shape = RoundedCornerShape(24.dp)
+                                    )
+                                    .background(
+                                        Brush.verticalGradient(
+                                            colors = listOf(Color(0xFF211B47), Color(0xFF130E29))
+                                        ),
+                                        shape = RoundedCornerShape(24.dp)
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(20.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    // A glowing circular progress representing today's mindfulness repetitions
+                                    Box(
+                                        modifier = Modifier
+                                            .size(76.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFFFFB74D).copy(alpha = 0.05f))
+                                            .border(1.dp, Color(0xFFFFB74D).copy(alpha = 0.15f), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            progress = { (dailyOverallReps / 100f).coerceIn(0f, 1f) },
+                                            modifier = Modifier.size(68.dp),
+                                            color = Color(0xFFFFB74D),
+                                            strokeWidth = 4.dp,
+                                            trackColor = Color.White.copy(alpha = 0.05f),
+                                        )
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text(
+                                                text = "$dailyOverallReps",
+                                                color = Color.White,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 20.sp
+                                            )
+                                            Text(
+                                                text = "REPS",
+                                                color = Color(0xFFFFB74D),
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 8.sp,
+                                                letterSpacing = 0.5.sp
+                                            )
+                                        }
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            text = "TODAY'S REPITITIONS OVERALL",
+                                            color = Color(0xFFFFB74D),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.sp,
+                                            letterSpacing = 1.sp
+                                        )
+                                        Text(
+                                            text = encouragingMsg,
+                                            color = Color.White.copy(alpha = 0.9f),
+                                            fontSize = 12.sp,
+                                            lineHeight = 16.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Instructions Tip Row
                         item {
                             Card(
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.02f)),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .border(1.dp, GlassBorder, RoundedCornerShape(20.dp))
+                                    .border(1.dp, GlassBorder, RoundedCornerShape(16.dp))
                             ) {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color(0xFFFFB74D), modifier = Modifier.size(18.dp))
-                                        Text("Select a Mindset Focus", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color(0xFFFFB74D), modifier = Modifier.size(16.dp))
+                                        Text("Select Focus to Practice", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                     }
                                     Text(
-                                        text = "Tap any category to begin practicing. Repetition trains neural pathways. Tap on the screen to count repetitions and swipe left/right to change affirmations.",
+                                        text = "Tap on any mindset category below to begin an immersive practice session. During the practice, tap anywhere on the screen to count recitations.",
                                         color = DarkTextSecondary,
                                         fontSize = 11.sp,
-                                        lineHeight = 16.sp
+                                        lineHeight = 15.sp
                                     )
                                 }
                             }
@@ -3833,69 +4717,101 @@ fun AffirmationCounterScreen(
                                 val items by itemsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
                                 Card(
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = RoundedCornerShape(20.dp),
                                     colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.03f)),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .border(1.dp, GlassBorder, RoundedCornerShape(16.dp))
+                                        .border(1.dp, GlassBorder, RoundedCornerShape(20.dp))
                                         .clickable {
-                                            showCategoryOptionsDialog = category
+                                            selectedCategoryIdForSession = category.id
+                                            selectedCategoryNameForSession = category.name
                                         }
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(16.dp),
+                                        modifier = Modifier.padding(18.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                Text(
-                                                    text = category.name,
-                                                    color = Color.White,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 14.sp
-                                                )
-                                                if (category.isDefault) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .background(Color(0xFFFFB74D).copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    ) {
-                                                        Text("PRESET", color = Color(0xFFFFB74D), fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                                                    }
-                                                }
-                                            }
-                                            Text(
-                                                text = "${items.size} affirmations loaded",
-                                                color = DarkTextSecondary,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-
                                         Row(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.weight(1f),
+                                            horizontalArrangement = Arrangement.spacedBy(14.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            // Start practicing shortcut button
-                                            Button(
-                                                onClick = {
-                                                    selectedCategoryIdForSession = category.id
-                                                    selectedCategoryNameForSession = category.name
-                                                },
-                                                shape = RoundedCornerShape(8.dp),
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB74D).copy(alpha = 0.12f), contentColor = Color(0xFFFFB74D)),
-                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                                modifier = Modifier.height(32.dp)
+                                            // Circular focus badge representing the category
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(44.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFFFFB74D).copy(alpha = 0.08f)),
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                Text("Start", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                Icon(
+                                                    imageVector = Icons.Default.AutoAwesome,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFFFB74D),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
                                             }
 
-                                            IconButton(
-                                                onClick = { selectedCategoryForManagement = category },
-                                                modifier = Modifier.size(32.dp)
-                                            ) {
-                                                Icon(Icons.Default.Settings, contentDescription = "Manage sentences", tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(16.dp))
+                                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Text(
+                                                        text = category.name,
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 15.sp
+                                                    )
+                                                    if (category.isDefault) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .background(Color(0xFFFFB74D).copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text("PRESET", color = Color(0xFFFFB74D), fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                                        }
+                                                    }
+                                                }
+
+                                                val categoryTotalReps = remember(logs, category.id) {
+                                                    logs.filter { it.categoryId == category.id }.sumOf { it.tapCount }
+                                                }
+
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "${items.size} statements",
+                                                        color = DarkTextSecondary,
+                                                        fontSize = 11.sp
+                                                    )
+                                                    Box(modifier = Modifier.size(3.dp).clip(CircleShape).background(DarkTextSecondary.copy(alpha = 0.4f)))
+                                                    Text(
+                                                        text = "$categoryTotalReps total reps",
+                                                        color = Color(0xFFFFB74D),
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
                                             }
+                                        }
+
+                                        // Manage Category button (distinct, large touch target!)
+                                        IconButton(
+                                            onClick = { selectedCategoryForManagement = category },
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .background(Color.White.copy(alpha = 0.04f), CircleShape)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Settings,
+                                                contentDescription = "Manage Category",
+                                                tint = Color.White.copy(alpha = 0.7f),
+                                                modifier = Modifier.size(18.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -4273,6 +5189,8 @@ fun ActiveAffirmationSession(
     val itemsFlow = remember(categoryId) { viewModel.getAffirmationsForCategoryFlow(categoryId) }
     val items by itemsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
+    val haptic = LocalHapticFeedback.current
+
     var shuffledItems by remember { mutableStateOf<List<AffirmationItem>>(emptyList()) }
     var currentIndex by remember { mutableStateOf(0) }
 
@@ -4367,115 +5285,119 @@ fun ActiveAffirmationSession(
                 )
             )
     ) {
-        // Upper session controls
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = {
-                    saveCurrentSentenceLog()
-                    onClose()
-                },
-                modifier = Modifier.background(Color.White.copy(alpha = 0.05f), CircleShape)
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "Exit Session", tint = Color.White)
-            }
-
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = categoryName.uppercase(),
-                    color = Color(0xFFFFB74D),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    letterSpacing = 1.sp
-                )
-                
-                val elapsedMins = totalSessionSeconds / 60
-                val elapsedSecs = totalSessionSeconds % 60
-                Text(
-                    text = String.format("%02d:%02d", elapsedMins, elapsedSecs),
-                    color = Color.White.copy(alpha = 0.5f),
-                    fontSize = 11.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                )
-            }
-
-            // Simple total counter badge
-            Box(
-                modifier = Modifier
-                    .background(Color(0xFFFFB74D).copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = "TOTAL: $sessionTotalCount",
-                    color = Color(0xFFFFB74D),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 10.sp
-                )
-            }
-        }
-
-        // Central interactive core
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp)
-                .padding(top = 80.dp, bottom = 120.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+                .statusBarsPadding()
+                .navigationBarsPadding()
         ) {
+            // Upper session controls
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = {
+                        saveCurrentSentenceLog()
+                        onClose()
+                    },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Exit Session", tint = Color.White)
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = categoryName.uppercase(),
+                        color = Color(0xFFFFB74D),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.5.sp
+                    )
+                    
+                    val elapsedMins = totalSessionSeconds / 60
+                    val elapsedSecs = totalSessionSeconds % 60
+                    Text(
+                        text = String.format("%02d:%02d", elapsedMins, elapsedSecs),
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 12.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
+                }
+
+                // Total session-wide counter badge
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFFFFB74D).copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+                        .border(1.dp, Color(0xFFFFB74D).copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "SESSION: $sessionTotalCount",
+                        color = Color(0xFFFFB74D),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+            }
+
             if (shuffledItems.isEmpty()) {
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         Icon(Icons.Default.Hearing, contentDescription = null, tint = DarkTextSecondary, modifier = Modifier.size(48.dp))
                         Text(
                             text = "No statements configured.\nAdd statements in Category settings.",
                             color = DarkTextSecondary,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             textAlign = TextAlign.Center
                         )
                     }
                 }
             } else {
-                Text(
-                    text = "TAP SCREEN TO REPEAT • SWIPE TO CHANGE",
-                    color = Color.White.copy(alpha = 0.25f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp,
-                    modifier = Modifier.padding(bottom = 24.dp)
-                )
-
-                // The glowing tap card container
+                // Massive Tap Area (takes up all remaining weight!)
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
                         .clip(RoundedCornerShape(32.dp))
                         .background(
-                            Brush.radialGradient(
-                                colors = listOf(Color(0xFFFFB74D).copy(alpha = 0.05f), Color.Transparent),
-                                radius = 600f
+                            Brush.verticalGradient(
+                                colors = listOf(Color(0xFF1E173C), Color(0xFF130E26))
                             )
                         )
-                        .border(1.dp, GlassBorder, RoundedCornerShape(32.dp))
+                        .border(1.5.dp, Color(0xFFFFB74D).copy(alpha = 0.15f), RoundedCornerShape(32.dp))
                         .clickable {
                             currentSentenceCount++
                             sessionTotalCount++
-                            scaleTrigger = 1.05f
+                            scaleTrigger = 1.08f
                             floatingPlusOneList = floatingPlusOneList + System.currentTimeMillis()
+                            try {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } catch (e: Exception) {
+                                // Fallback
+                            }
                         }
                         .pointerInput(Unit) {
                             detectHorizontalDragGestures(
                                 onDragEnd = {
-                                    if (dragAmount > 120f) {
+                                    if (dragAmount > 80f) {
                                         navigateToPrev()
-                                    } else if (dragAmount < -120f) {
+                                    } else if (dragAmount < -80f) {
                                         navigateToNext()
                                     }
                                     dragAmount = 0f
@@ -4487,49 +5409,82 @@ fun ActiveAffirmationSession(
                         },
                     contentAlignment = Alignment.Center
                 ) {
+                    // Aesthetic background glowing spheres
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(Color(0xFFFFB74D).copy(alpha = 0.08f * cardScale), Color.Transparent),
+                                    radius = 800f
+                                )
+                            )
+                    )
+
                     Column(
-                        modifier = Modifier.padding(24.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(24.dp)
+                        verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        // Statement text with breathing scale
+                        // Top helper hint
                         Text(
-                            text = currentAffirmation?.text ?: "",
-                            color = Color.White,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 32.sp,
+                            text = "TAP ANYWHERE ON SCREEN TO COUNT • SWIPE TO CHANGE",
+                            color = Color.White.copy(alpha = 0.3f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.5.sp,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+
+                        // Center: Pulsing Statement Area
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(20.dp),
                             modifier = Modifier
+                                .weight(1f)
+                                .wrapContentHeight(Alignment.CenterVertically)
                                 .graphicsLayer(
                                     scaleX = cardScale,
                                     scaleY = cardScale
                                 )
-                                .padding(horizontal = 12.dp)
-                        )
-
-                        // Progress inside active statement
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                text = "Current Reps",
-                                color = DarkTextSecondary,
+                                text = currentAffirmation?.text ?: "",
+                                color = Color.White,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 36.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                        }
+
+                        // Bottom: Large reps counter
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        ) {
+                            Text(
+                                text = "CURRENT REPETITIONS",
+                                color = Color(0xFFFFB74D).copy(alpha = 0.8f),
                                 fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
                                 letterSpacing = 1.sp
                             )
                             Text(
                                 text = "$currentSentenceCount",
                                 color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 36.sp
+                                fontWeight = FontWeight.Black,
+                                fontSize = 54.sp
                             )
                         }
                     }
 
-                    // Floating rising text indicators (+1)
+                    // Floating rising indicators (+1)
                     floatingPlusOneList.forEach { id ->
                         RisingIndicatorEffect(
                             key = id,
@@ -4540,63 +5495,69 @@ fun ActiveAffirmationSession(
                     }
                 }
 
-                // Sentence paging indicator dots
-                Row(
-                    modifier = Modifier.padding(top = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    shuffledItems.forEachIndexed { idx, _ ->
-                        val isSel = idx == currentIndex
-                        Box(
-                            modifier = Modifier
-                                .size(if (isSel) 8.dp else 5.dp)
-                                .clip(CircleShape)
-                                .background(if (isSel) Color(0xFFFFB74D) else Color.White.copy(alpha = 0.15f))
-                        )
-                    }
-                }
-            }
-        }
-
-        // Footer buttons
-        if (shuffledItems.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 24.dp, vertical = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = { navigateToPrev() },
-                    modifier = Modifier.background(Color.White.copy(alpha = 0.03f), CircleShape)
-                ) {
-                    Icon(Icons.Default.ChevronLeft, contentDescription = "Previous Affirmation", tint = Color.White)
-                }
-
-                Button(
-                    onClick = {
-                        saveCurrentSentenceLog()
-                        onClose()
-                    },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB74D), contentColor = Color.Black),
+                // Footer section with page indicator and navigation controls
+                Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 16.dp)
-                        .height(48.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Text("End Session", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
+                    // Paging dots
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        shuffledItems.forEachIndexed { idx, _ ->
+                            val isSel = idx == currentIndex
+                            Box(
+                                modifier = Modifier
+                                    .size(if (isSel) 8.dp else 5.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isSel) Color(0xFFFFB74D) else Color.White.copy(alpha = 0.15f))
+                            )
+                        }
+                    }
 
-                IconButton(
-                    onClick = { navigateToNext() },
-                    modifier = Modifier.background(Color.White.copy(alpha = 0.03f), CircleShape)
-                ) {
-                    Icon(Icons.Default.ChevronRight, contentDescription = "Next Affirmation", tint = Color.White)
+                    // Navigation buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { navigateToPrev() },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(Color.White.copy(alpha = 0.04f), CircleShape)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Affirmation", tint = Color.White, modifier = Modifier.size(24.dp))
+                        }
+
+                        Button(
+                            onClick = {
+                                saveCurrentSentenceLog()
+                                onClose()
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB74D), contentColor = Color.Black),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 24.dp)
+                                .height(52.dp)
+                        ) {
+                            Text("End Repetition Session", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+
+                        IconButton(
+                            onClick = { navigateToNext() },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(Color.White.copy(alpha = 0.04f), CircleShape)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Affirmation", tint = Color.White, modifier = Modifier.size(24.dp))
+                        }
+                    }
                 }
             }
         }

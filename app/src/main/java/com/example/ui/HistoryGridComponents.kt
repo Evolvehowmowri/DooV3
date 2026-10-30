@@ -617,7 +617,7 @@ fun MeasurableLogDialog(
                             val sdf = SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault())
                             try {
                                 val d = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(date)
-                                sdf.format(d)
+                                if (d != null) sdf.format(d) else date
                             } catch (e: Exception) {
                                 date
                             }

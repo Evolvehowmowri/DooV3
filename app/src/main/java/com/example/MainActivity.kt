@@ -106,13 +106,17 @@ data class CustomReminderConfig(
     val snooze: String = "No Snooze",
     val note: String = "",
     val intervalDays: Int = 0, // e.g. every 15 days
-    val enableRandomWhispers: Boolean = false
+    val enableRandomWhispers: Boolean = false,
+    val enableRingingAlarm: Boolean = false,
+    val ringDurationMinutes: Int = 1,
+    val autoSnoozeMinutes: Int = 5,
+    val maxAlarmCycles: Int = 3
 ) {
     fun toSerializedString(): String {
         val timesStr = times.joinToString(",")
         val daysStr = days.joinToString(",")
         val escapedNote = note.replace("|", "\\|").replace("=", "\\=")
-        return "CONFIG_V1|times:$timesStr|days:$daysStr|sound:$sound|snooze:$snooze|note:$escapedNote|intervalDays:$intervalDays|enableRandomWhispers:$enableRandomWhispers"
+        return "CONFIG_V1|times:$timesStr|days:$daysStr|sound:$sound|snooze:$snooze|note:$escapedNote|intervalDays:$intervalDays|enableRandomWhispers:$enableRandomWhispers|enableRingingAlarm:$enableRingingAlarm|ringDurationMinutes:$ringDurationMinutes|autoSnoozeMinutes:$autoSnoozeMinutes|maxAlarmCycles:$maxAlarmCycles"
     }
 
     companion object {
@@ -135,6 +139,10 @@ data class CustomReminderConfig(
                 var note = ""
                 var intervalDays = 0
                 var enableRandomWhispers = false
+                var enableRingingAlarm = false
+                var ringDurationMinutes = 1
+                var autoSnoozeMinutes = 5
+                var maxAlarmCycles = 3
 
                 for (part in parts) {
                     val colonIdx = part.indexOf(":")
@@ -160,10 +168,17 @@ data class CustomReminderConfig(
                             "note" -> note = value.replace("\\|", "|").replace("\\=", "=")
                             "intervalDays" -> intervalDays = value.toIntOrNull() ?: 0
                             "enableRandomWhispers" -> enableRandomWhispers = value.toBoolean()
+                            "enableRingingAlarm" -> enableRingingAlarm = value.toBoolean()
+                            "ringDurationMinutes" -> ringDurationMinutes = value.toIntOrNull() ?: 1
+                            "autoSnoozeMinutes" -> autoSnoozeMinutes = value.toIntOrNull() ?: 5
+                            "maxAlarmCycles" -> maxAlarmCycles = value.toIntOrNull() ?: 3
                         }
                     }
                 }
-                return CustomReminderConfig(times, days, sound, snooze, note, intervalDays, enableRandomWhispers)
+                return CustomReminderConfig(
+                    times, days, sound, snooze, note, intervalDays, enableRandomWhispers,
+                    enableRingingAlarm, ringDurationMinutes, autoSnoozeMinutes, maxAlarmCycles
+                )
             } catch (e: Exception) {
                 return CustomReminderConfig()
             }
@@ -276,6 +291,40 @@ fun MainAppScreen() {
     var showAddDialog by remember { mutableStateOf(false) }
     var doToEdit by remember { mutableStateOf<Do?>(null) }
     var selectedDoForStats by remember { mutableStateOf<Do?>(null) }
+
+    var isAlarmRinging by remember { mutableStateOf(AlarmSoundPlayer.isRinging) }
+    var alarmDoId by remember { mutableStateOf(AlarmSoundPlayer.activeDoId) }
+    var alarmDoName by remember { mutableStateOf(AlarmSoundPlayer.activeDoName) }
+    var alarmCycle by remember { mutableStateOf(AlarmSoundPlayer.activeCycle) }
+    var alarmMaxCycles by remember { mutableStateOf(AlarmSoundPlayer.maxCycles) }
+    var alarmNote by remember { mutableStateOf(AlarmSoundPlayer.activeNote) }
+
+    DisposableEffect(Unit) {
+        AlarmSoundPlayer.onStateChanged = {
+            isAlarmRinging = AlarmSoundPlayer.isRinging
+            alarmDoId = AlarmSoundPlayer.activeDoId
+            alarmDoName = AlarmSoundPlayer.activeDoName
+            alarmCycle = AlarmSoundPlayer.activeCycle
+            alarmMaxCycles = AlarmSoundPlayer.maxCycles
+            alarmNote = AlarmSoundPlayer.activeNote
+        }
+        onDispose {
+            AlarmSoundPlayer.onStateChanged = null
+        }
+    }
+
+    val activity = context as? androidx.activity.ComponentActivity
+    LaunchedEffect(activity?.intent) {
+        val openAlarmDialog = activity?.intent?.getBooleanExtra("open_alarm_dialog", false) ?: false
+        if (openAlarmDialog) {
+            isAlarmRinging = AlarmSoundPlayer.isRinging
+            alarmDoId = AlarmSoundPlayer.activeDoId
+            alarmDoName = AlarmSoundPlayer.activeDoName
+            alarmCycle = AlarmSoundPlayer.activeCycle
+            alarmMaxCycles = AlarmSoundPlayer.maxCycles
+            alarmNote = AlarmSoundPlayer.activeNote
+        }
+    }
 
     GlassyBackground {
         Scaffold(
@@ -486,6 +535,123 @@ fun MainAppScreen() {
                 }
                 showAddDialog = false
                 doToEdit = null
+            }
+        )
+    }
+
+    if (isAlarmRinging) {
+        AlertDialog(
+            onDismissRequest = { /* Force user interaction */ },
+            containerColor = Color(0xFF131416),
+            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier.border(2.dp, LavenderAccent, RoundedCornerShape(28.dp)),
+            title = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(LavenderAccent.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = "Alarm Ringing",
+                            tint = LavenderAccent,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "TASK REMINDER ALARM",
+                        color = LavenderAccent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp
+                    )
+                }
+            },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = alarmDoName,
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    
+                    if (alarmNote.isNotBlank()) {
+                        Text(
+                            text = "\"$alarmNote\"",
+                            color = DarkTextSecondary,
+                            fontSize = 14.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(DeepPurpleContainer)
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Cycle $alarmCycle of $alarmMaxCycles",
+                            color = LavenderAccent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        AlarmSoundPlayer.stopAlarmAndDismiss(context)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LavenderAccent,
+                        contentColor = DeepPurpleContainer
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Dismiss Alarm", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        AlarmSoundPlayer.stopAlarmAndSnooze(context)
+                    },
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(bottom = 8.dp)
+                ) {
+                    Icon(Icons.Default.AccessTime, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Snooze (${AlarmSoundPlayer.autoSnoozeMs / 60000} Min)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
             }
         )
     }
@@ -4449,6 +4615,10 @@ fun AddEditDoDialog(
     var reminderNote by remember { mutableStateOf(initialConfig.note) }
     var intervalDaysText by remember { mutableStateOf(if (initialConfig.intervalDays > 0) initialConfig.intervalDays.toString() else "") }
     var enableRandomWhispers by remember { mutableStateOf(initialConfig.enableRandomWhispers) }
+    var enableRingingAlarm by remember { mutableStateOf(initialConfig.enableRingingAlarm) }
+    var ringDurationMinutes by remember { mutableStateOf(initialConfig.ringDurationMinutes) }
+    var autoSnoozeMinutes by remember { mutableStateOf(initialConfig.autoSnoozeMinutes) }
+    var maxAlarmCycles by remember { mutableStateOf(initialConfig.maxAlarmCycles) }
 
     var pickerHour by remember { mutableStateOf(8) }
     var pickerMinute by remember { mutableStateOf(0) }
@@ -5458,6 +5628,113 @@ fun AddEditDoDialog(
                         }
                     }
 
+                    // Enable Ringing Alarm Support
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Ringing Phone Alarm Mode", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("Reminder rings like a real phone alarm with auto-snooze cycles", color = DarkTextSecondary, fontSize = 11.sp)
+                                }
+                                Switch(
+                                    checked = enableRingingAlarm,
+                                    onCheckedChange = { enableRingingAlarm = it },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = LavenderAccent,
+                                        checkedTrackColor = DeepPurpleContainer
+                                    )
+                                )
+                            }
+
+                            if (enableRingingAlarm) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.dp, GlassBorder, RoundedCornerShape(12.dp))
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        // Ringing Duration
+                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("Ringing Duration", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("$ringDurationMinutes Minute${if (ringDurationMinutes > 1) "s" else ""}", color = LavenderAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Slider(
+                                                value = ringDurationMinutes.toFloat(),
+                                                onValueChange = { ringDurationMinutes = it.toInt() },
+                                                valueRange = 1f..10f,
+                                                steps = 8,
+                                                colors = SliderDefaults.colors(
+                                                    thumbColor = LavenderAccent,
+                                                    activeTrackColor = LavenderAccent
+                                                )
+                                            )
+                                        }
+
+                                        // Auto-Snooze Interval
+                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("Auto-Snooze Interval", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("$autoSnoozeMinutes Minute${if (autoSnoozeMinutes > 1) "s" else ""}", color = LavenderAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Slider(
+                                                value = autoSnoozeMinutes.toFloat(),
+                                                onValueChange = { autoSnoozeMinutes = it.toInt() },
+                                                valueRange = 1f..30f,
+                                                steps = 28,
+                                                colors = SliderDefaults.colors(
+                                                    thumbColor = LavenderAccent,
+                                                    activeTrackColor = LavenderAccent
+                                                )
+                                            )
+                                        }
+
+                                        // Max Snooze Cycles
+                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("Max Snooze Cycles", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                Text("$maxAlarmCycles Time${if (maxAlarmCycles > 1) "s" else ""}", color = LavenderAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Slider(
+                                                value = maxAlarmCycles.toFloat(),
+                                                onValueChange = { maxAlarmCycles = it.toInt() },
+                                                valueRange = 1f..10f,
+                                                steps = 8,
+                                                colors = SliderDefaults.colors(
+                                                    thumbColor = LavenderAccent,
+                                                    activeTrackColor = LavenderAccent
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Customized Whisper Message / Note
                     item {
                         OutlinedTextField(
@@ -5510,7 +5787,11 @@ fun AddEditDoDialog(
                                     snooze = selectedSnooze,
                                     note = reminderNote,
                                     intervalDays = intervalDaysText.toIntOrNull() ?: 0,
-                                    enableRandomWhispers = enableRandomWhispers
+                                    enableRandomWhispers = enableRandomWhispers,
+                                    enableRingingAlarm = enableRingingAlarm,
+                                    ringDurationMinutes = ringDurationMinutes,
+                                    autoSnoozeMinutes = autoSnoozeMinutes,
+                                    maxAlarmCycles = maxAlarmCycles
                                 ).toSerializedString()
                             } else null,
                             purpose,
